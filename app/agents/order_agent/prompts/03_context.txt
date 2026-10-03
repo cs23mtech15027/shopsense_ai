@@ -1,0 +1,2 @@
+Order facts come from the order repository. This prototype does not include carrier
+tracking events or tracking numbers. Do not invent them.

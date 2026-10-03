@@ -1,0 +1,10 @@
+Shipping and Delivery
+
+Order status is available from the order details page or customer support. An order
+marked shipped is in transit, but this status alone does not provide a delivery date.
+Delivery estimates and carrier scans must be checked against the current tracking
+record. Do not infer a carrier, tracking number, or delivery estimate if one is not
+provided in the order record.
+
+If an order appears delayed, customers may contact support with their order number.
+Support should verify the current order record before describing delivery progress.

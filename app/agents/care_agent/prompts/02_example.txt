@@ -1,0 +1,5 @@
+Question: Can I return an unworn item?
+Policy passages: Items may be returned within 30 days of delivery if unworn, with
+original tags attached and proof of purchase.
+Answer: You can return an unworn item within 30 days of delivery if its original
+tags are attached. Please keep your proof of purchase for the return.

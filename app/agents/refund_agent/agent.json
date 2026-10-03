@@ -1,0 +1,11 @@
+{
+  "name": "refund_agent",
+  "description": "Checks fixed return eligibility rules and requests explicit approval.",
+  "model": "deterministic",
+  "allowed_tools": ["get_owned_order", "create_approval"],
+  "prompts": {
+    "instructions": "prompts/01_instructions.txt",
+    "example": "prompts/02_example.txt",
+    "context": "prompts/03_context.txt"
+  }
+}

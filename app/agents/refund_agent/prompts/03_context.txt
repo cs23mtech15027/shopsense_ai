@@ -1,0 +1,4 @@
+Refund eligibility is currently defined in the deterministic order service. It
+requires delivery within the configured return window, unused condition, attached
+original tags, a non-final-sale item, return receipt, and a passed inspection.
+This is demo behavior and must be replaced with approved retailer policy.

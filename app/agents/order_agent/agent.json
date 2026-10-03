@@ -1,0 +1,11 @@
+{
+  "name": "order_agent",
+  "description": "Looks up order state using the authenticated customer identifier.",
+  "model": "deterministic",
+  "allowed_tools": ["get_owned_order"],
+  "prompts": {
+    "instructions": "prompts/01_instructions.txt",
+    "example": "prompts/02_example.txt",
+    "context": "prompts/03_context.txt"
+  }
+}

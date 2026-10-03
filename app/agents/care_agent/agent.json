@@ -1,0 +1,11 @@
+{
+  "name": "care_agent",
+  "description": "Answers customer care questions using retrieved policy passages.",
+  "model": "configured-local-chat-model",
+  "allowed_tools": ["search_policy"],
+  "prompts": {
+    "instructions": "prompts/01_instructions.txt",
+    "example": "prompts/02_example.txt",
+    "context": "prompts/03_context.txt"
+  }
+}

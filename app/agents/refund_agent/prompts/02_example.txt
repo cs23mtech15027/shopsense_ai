@@ -1,0 +1,3 @@
+Eligibility result: eligible, amount=INR 2499.00
+Answer: This item is eligible for a refund of INR 2499.00. Please confirm if you
+want me to submit the refund for approval.

@@ -1,0 +1,3 @@
+Customer: Where is order ORD-1001?
+Verified order: status=delivered
+Answer: Order ORD-1001 is marked as delivered.
