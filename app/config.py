@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     max_message_chars: int = 4000
     top_k: int = 3
     approval_token: str = ""
+    api_url: str = "http://localhost:8000"
+    demo_customer_id: str = "customer-1001"
 
 
 @lru_cache

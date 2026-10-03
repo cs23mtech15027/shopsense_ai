@@ -21,8 +21,8 @@ repository adapter with an authenticated commerce API before handling real order
 ## Run locally
 
 Requirements: Python 3.11+, Docker Compose, and (for the local model) a machine
-with enough memory for Qwen3 8B. The model and embeddings are served locally by
-Ollama; the initial Qdrant embedding model is downloaded by FastEmbed.
+with enough memory for Qwen3 8B. The chat model is served locally by Ollama;
+FastEmbed downloads and runs the embedding model locally on CPU.
 
 1. Copy `.env.example` to `.env`, set `SHOPSENSE_APPROVAL_TOKEN` to a unique
    development secret, and adjust settings if needed.
@@ -33,11 +33,18 @@ Ollama; the initial Qdrant embedding model is downloaded by FastEmbed.
    ```powershell
    py -3.11 -m venv .venv
    .\.venv\Scripts\Activate.ps1
-   python -m pip install -e ".[dev]"
+   python -m pip install -e ".[dev,ui]"
    uvicorn app.main:app --reload
    ```
 
-5. Open `http://localhost:8000/docs`.
+5. In a second terminal with the virtual environment activated, run the Chainlit UI:
+
+   ```powershell
+   python run_ui.py
+   ```
+
+6. Open `http://localhost:8001` for the chat UI, or `http://localhost:8000/docs`
+   for the API documentation.
 
 The LangGraph workflow persists the most recent six conversational turns per
 conversation in a separate SQLite checkpointer. Reuse the response's
@@ -64,6 +71,10 @@ Chat:
 The first request can omit `conversation_id`; the response provides one to reuse.
 The sample order is intentionally tied to `customer-1001`. The API checks order
 ownership against the submitted demo customer ID, but does not authenticate it.
+The Chainlit UI uses `SHOPSENSE_DEMO_CUSTOMER_ID` from `.env` and the `SHOPSENSE_API_URL`
+setting to connect to the API. The default API address is `http://localhost:8000`.
+To connect the UI to a different API address, set `SHOPSENSE_API_URL` in `.env`
+before starting Chainlit.
 
 Refund flow:
 
@@ -98,6 +109,9 @@ Refund flow:
   authentication dependency resolves identity server-side.
 - `agent.json` and prompt text are agent-local configuration; never put secrets
   or customer data in prompt files.
+- Chainlit approval actions send the approval token from server-side settings to
+  the API; the token is not embedded in browser chat content. Customer IDs remain
+  demo-only and must be replaced with authenticated identity before real use.
 
 ## Project layout
 
@@ -117,6 +131,8 @@ app/
   workflow/
 data/
 tests/
+ui.py
+run_ui.py
 ```
 
 Run focused tests with `pytest`.

@@ -21,7 +21,7 @@ class FakeRefundAgent:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("message", "expected_intent"),
+    ("message", "expected_intent", "sentiment"),
     [
         ("Where is order ORD-1001?", "order", "neutral"),
         ("I want a refund for ORD-1001, this is frustrating", "refund", "negative"),
