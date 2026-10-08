@@ -11,7 +11,14 @@ class RefundAgent:
         self.refund_tool = refund_tool
 
     async def handle(self, state: dict) -> dict:
-        order_id = self.order_tool.extract_order_id(state["message"])
+        order_id = (
+            self.order_tool.extract_order_id(state["message"])
+            or (
+                state.get("active_order_id")
+                if state.get("use_active_order")
+                else None
+            )
+        )
         if order_id is None:
             return {
                 "answer": "Please share the order ID so I can check the return options.",
@@ -49,9 +56,9 @@ class RefundAgent:
         )
         amount = order["amount_minor"] / 100
         answer = (
-            f"Order {order_id} is eligible for a refund of {order['currency']} {amount:.2f}. "
-            "The return has been received and inspected. Refund initiation is pending "
-            "authorized approval; no refund has been initiated yet."
+            f"Are you sure you want to proceed with the refund for order {order_id} "
+            f"for {order['currency']} {amount:.2f}? Select **Yes** to confirm or "
+            "**No** to cancel. No refund has been initiated."
         )
         on_agent_complete("pending_approval")
         return {

@@ -24,8 +24,9 @@ Requirements: Python 3.11+, Docker Compose, and (for the local model) a machine
 with enough memory for Qwen3 8B. The chat model is served locally by Ollama;
 FastEmbed downloads and runs the embedding model locally on CPU.
 
-1. Copy `.env.example` to `.env`, set `SHOPSENSE_APPROVAL_TOKEN` to a unique
-   development secret, and adjust settings if needed.
+1. Copy `.env.example` to `.env`, set `SHOPSENSE_APPROVAL_TOKEN` to a unique,
+   non-empty development secret, and adjust settings if needed. Both the API and
+   Chainlit UI read this setting; restart both processes after changing it.
 2. Start services: `docker compose up -d`
 3. Pull the local chat model: `docker compose exec ollama ollama pull qwen3:8b`
 4. Install and run the API:
@@ -45,6 +46,16 @@ FastEmbed downloads and runs the embedding model locally on CPU.
 
 6. Open `http://localhost:8001` for the chat UI, or `http://localhost:8000/docs`
    for the API documentation.
+
+There is no login screen. Use the **Demo customer** dropdown in Chainlit to choose
+Customer 1, Customer 2, or Customer 3. Changing customers starts a fresh
+conversation and issues a local demo session for the selected account.
+
+Each account has ten separate demo orders. IDs are `ORD-1101`–`ORD-1110`,
+`ORD-2101`–`ORD-2110`, and `ORD-3101`–`ORD-3110` respectively. The first
+order for each user is eligible for a return after approval; the second is
+final-sale and ineligible. The other orders cover varied delivery and return
+conditions. These fixed credentials are only for local demonstration.
 
 The LangGraph workflow persists the most recent six conversational turns per
 conversation in a separate SQLite checkpointer. Reuse the response's
@@ -71,30 +82,39 @@ Chat:
 
 ```json
 {
-  "customer_id": "customer-1001",
   "conversation_id": "your-conversation-id",
-  "message": "Where is order ORD-1001?"
+  "message": "Where is order ORD-1101?"
 }
 ```
 
-The first request can omit `conversation_id`; the response provides one to reuse.
-The sample order is intentionally tied to `customer-1001`. The API checks order
-ownership against the submitted demo customer ID, but does not authenticate it.
-The Chainlit UI uses `SHOPSENSE_DEMO_CUSTOMER_ID` from `.env` and the `SHOPSENSE_API_URL`
-setting to connect to the API. The default API address is `http://localhost:8000`.
-To connect the UI to a different API address, set `SHOPSENSE_API_URL` in `.env`
-before starting Chainlit.
+The Chainlit customer dropdown obtains a session from
+`POST /v1/auth/demo-session` with one of the three seeded customer IDs; the
+returned token is attached as `Authorization: Bearer <access_token>` on chat
+requests. The first request can omit `conversation_id`; the response provides one
+to reuse. The API resolves the customer from the session and checks order ownership
+server-side. Sessions expire after 12 hours. This no-login selector is for the
+local demo only and is not real customer authentication. The UI's API address is
+controlled by `SHOPSENSE_API_URL` in `.env`, defaulting to `http://localhost:8000`.
 
 The Chainlit **Help topic** selector can route automatically or explicitly select
 order status/delivery, refund/return, or care/policy. Automatic routing remains
 the default.
 
+Questions about return eligibility, policy, or steps (for example, "How do I
+return this product?") are answered by the policy retrieval agent and do not
+create a refund approval. A direct refund request (for example, "Please initiate
+a refund for ORD-1101") checks eligibility and asks the customer to confirm the
+order and amount with **Yes, proceed** or **No, cancel**. Only the Yes action
+records the demo refund initiation; No cancels without initiating it.
+General return/refund information uses the canonical `returns.txt` policy passage;
+the assistant answers directly without including prior assistant messages as
+policy context, and Chainlit appends the policy source after the answer.
+
 Refund flow:
 
-1. Ask to return/refund an order and include its order ID. Twelve demo orders
-   (`ORD-1001`–`ORD-1012`) have distinct customer IDs and products, and cover
-   shipped, in-transit, eligible, outside-window, final-sale, missing-tag,
-   inspection-pending, and already-initiated examples.
+1. Ask to return/refund an order and include its order ID. Each demo account has
+   ten customer-owned orders covering shipped, in-transit, eligible,
+   outside-window, final-sale, missing-tag, and inspection-pending examples.
 2. If deterministic eligibility checks pass, the assistant creates or reuses a
    pending approval. A pending request does not set `refund_initiated`.
 3. Approve with `POST /v1/approvals/{approval_id}`, `{"approved": true}`, and the
@@ -116,18 +136,21 @@ Refund flow:
   final-sale status, return receipt, inspection outcome, prior refund status, and
   the initiated flag.
 - Refund approval calls require the configured `X-Approval-Token` header. Approval
-  is disabled when no token is configured.
+  is disabled when no token is configured. The API and Chainlit UI must load the
+  same non-empty `SHOPSENSE_APPROVAL_TOKEN` value from `.env`.
 - Text, PDF, and CSV policy chunks/records are embedded locally, indexed in
   Qdrant, and cited by source. CSV/PDF table records retain each column name beside
   its value, avoiding embeddings of detached cell text.
-- The chat model receives the current request, up to two recent conversational
-  turns, and a small set of retrieved policy chunks; order/refund agents do not
-  send conversation history to a model.
-- Tool access is allowlisted by agent. This demo uses SQLite order data and is not
-  connected to a real commerce backend, customer authentication provider, or
-  payment rail. The `customer_id` in `/v1/chat` is demo input, not verified identity;
-  never expose this API to customers or connect real customer records until an
-  authentication dependency resolves identity server-side.
+- The latest order ID is retained in the checkpointed conversation state and
+  reused for follow-up order/refund questions that omit it. Greetings receive a
+  local response without invoking a specialist or Qdrant. The chat model receives
+  the current request, up to two recent conversational turns, and a small set of
+  retrieved policy chunks; order/refund agents do not send conversation history
+  to a model.
+- Tool access is allowlisted by agent. This demo uses SQLite order data and local
+  demo accounts; it is not connected to a production customer authentication
+  provider, commerce backend, or payment rail. Do not use the demo credentials or
+  session scheme for real customers.
 - `agent.json` and prompt text are agent-local configuration; never put secrets
   or customer data in prompt files.
 - Chainlit approval actions send the approval token from server-side settings to

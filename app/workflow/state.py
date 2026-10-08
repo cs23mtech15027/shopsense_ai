@@ -5,6 +5,9 @@ class SupportState(TypedDict, total=False):
     customer_id: str
     query_type: str
     conversation: list[dict[str, str]]
+    active_order_id: str
+    use_active_order: bool
+    is_greeting: bool
     message: str
     intent: str
     sentiment: str

@@ -11,12 +11,44 @@ settings = get_settings()
 api_url = settings.api_url.rstrip("/")
 
 
-async def _post_chat(message: str, conversation_id: str, query_type: str) -> dict:
+async def _create_demo_session(customer_id: str) -> str:
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response = await client.post(
+                f"{api_url}/v1/auth/demo-session",
+                json={"customer_id": customer_id},
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            logger.error(
+                "ShopSense demo customer selection failed with HTTP %s",
+                error.response.status_code,
+            )
+            raise RuntimeError(
+                f"ShopSense could not select that demo customer (HTTP {error.response.status_code})."
+            ) from error
+        except httpx.RequestError as error:
+            logger.error("Unable to reach the ShopSense API during customer selection: %s", error)
+            raise RuntimeError(
+                f"Cannot connect to the ShopSense API at {api_url}; customer selection failed."
+            ) from error
+
+    return response.json()["access_token"]
+
+
+async def _post_chat(
+    message: str,
+    conversation_id: str,
+    query_type: str,
+    customer_id: str,
+    access_token: str,
+) -> dict:
     async with httpx.AsyncClient(timeout=90) as client:
         response = await client.post(
             f"{api_url}/v1/chat",
+            headers={"Authorization": f"Bearer {access_token}"},
             json={
-                "customer_id": settings.demo_customer_id,
+                "customer_id": customer_id,
                 "conversation_id": conversation_id,
                 "message": message,
                 "query_type": query_type,
@@ -29,8 +61,9 @@ async def _post_chat(message: str, conversation_id: str, query_type: str) -> dic
 async def _post_approval(approval_id: str, approved: bool) -> dict:
     if not settings.approval_token:
         raise RuntimeError(
-            "Refund approval is disabled. Configure SHOPSENSE_APPROVAL_TOKEN "
-            "in the API's .env file and restart the API."
+            "Refund approval is disabled because SHOPSENSE_APPROVAL_TOKEN is not "
+            "configured for the Chainlit UI. Set the same non-empty value in the "
+            "project .env file, then restart both the API and Chainlit UI."
         )
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
@@ -63,6 +96,16 @@ async def on_chat_start() -> None:
     settings_panel = cl.ChatSettings(
         [
             cl.input_widget.Select(
+                id="customer_id",
+                label="Demo customer",
+                items={
+                    "Customer 1": "customer-1",
+                    "Customer 2": "customer-2",
+                    "Customer 3": "customer-3",
+                },
+                initial_value="customer-1",
+            ),
+            cl.input_widget.Select(
                 id="query_type",
                 label="Help topic",
                 items={
@@ -76,13 +119,16 @@ async def on_chat_start() -> None:
         ]
     )
     configured = await settings_panel.send()
+    customer_id = configured.get("customer_id", "customer-1")
+    access_token = await _create_demo_session(customer_id)
+    cl.user_session.set("customer_id", customer_id)
+    cl.user_session.set("access_token", access_token)
     cl.user_session.set("query_type", configured.get("query_type", "auto"))
     await cl.Message(
         content=(
             "Welcome to ShopSense. Ask about an order or a store policy. "
-            "This demo uses customer account **"
-            f"{settings.demo_customer_id}**. This is a demo identifier, not verified "
-            "authentication. Type `/new` to start a fresh conversation."
+            f"Selected demo customer: **{customer_id}**. "
+            "Type `/new` to start a fresh conversation."
         )
     ).send()
 
@@ -90,6 +136,20 @@ async def on_chat_start() -> None:
 @cl.on_settings_update
 async def on_settings_update(updated_settings: dict) -> None:
     cl.user_session.set("query_type", updated_settings.get("query_type", "auto"))
+    customer_id = updated_settings.get(
+        "customer_id",
+        cl.user_session.get("customer_id", "customer-1"),
+    )
+    if customer_id != cl.user_session.get("customer_id"):
+        access_token = await _create_demo_session(customer_id)
+        cl.user_session.set("customer_id", customer_id)
+        cl.user_session.set("access_token", access_token)
+        cl.user_session.set("conversation_id", str(uuid4()))
+        await cl.Message(
+            content=(
+                f"Switched to demo customer **{customer_id}** and started a new conversation."
+            )
+        ).send()
 
 
 @cl.on_message
@@ -110,6 +170,8 @@ async def on_message(message: cl.Message) -> None:
             text,
             conversation_id,
             cl.user_session.get("query_type", "auto"),
+            cl.user_session.get("customer_id"),
+            cl.user_session.get("access_token"),
         )
     except httpx.HTTPStatusError as error:
         await cl.Message(content=_error_message(error)).send()
@@ -130,10 +192,10 @@ async def on_message(message: cl.Message) -> None:
         return
 
     content = result["answer"]
+    content += f"\n\n_{result['intent'].title()} · sentiment: {result['sentiment']}_"
     if result.get("sources"):
         source_list = "\n".join(f"- `{source}`" for source in result["sources"])
         content = f"{content}\n\n**Policy sources**\n{source_list}"
-    content += f"\n\n_{result['intent'].title()} · sentiment: {result['sentiment']}_"
 
     actions = []
     approval_id = result.get("approval_id")
@@ -141,15 +203,15 @@ async def on_message(message: cl.Message) -> None:
         actions = [
             cl.Action(
                 name="approve_refund",
-                label="Approve refund",
+                label="Yes, proceed",
                 payload={"approval_id": approval_id},
-                tooltip="Approve this demo refund request",
+                tooltip="Confirm refund initiation for this order",
             ),
             cl.Action(
                 name="decline_refund",
-                label="Decline",
+                label="No, cancel",
                 payload={"approval_id": approval_id},
-                tooltip="Decline this refund request",
+                tooltip="Cancel without initiating a refund",
             ),
         ]
     await cl.Message(content=content, actions=actions).send()

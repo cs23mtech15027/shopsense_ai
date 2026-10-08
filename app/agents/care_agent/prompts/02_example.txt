@@ -3,3 +3,11 @@ Policy passages: Items may be returned within 30 days of delivery if unworn, wit
 original tags attached and proof of purchase.
 Answer: You can return an unworn item within 30 days of delivery if its original
 tags are attached. Please keep your proof of purchase for the return.
+
+Question: What refund would I get for this product?
+Policy passages: After a returned item is received and inspected, an approved refund
+is issued to the original payment method. Processing time depends on the payment
+provider.
+Answer: Under the policy, an approved refund is sent to your original payment method
+after the returned item is received and inspected. The policy does not specify an
+exact refund amount; processing time depends on the payment provider.

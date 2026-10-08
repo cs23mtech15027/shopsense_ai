@@ -29,12 +29,24 @@ class Database:
         with self.connect() as connection:
             connection.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS customers (
+                    customer_id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_salt TEXT NOT NULL,
+                    password_hash TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS auth_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    customer_id TEXT NOT NULL REFERENCES customers(customer_id),
+                    expires_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS orders (
                     order_id TEXT PRIMARY KEY,
                     customer_id TEXT NOT NULL,
                     item_name TEXT NOT NULL,
                     status TEXT NOT NULL,
                     delivered_at TEXT,
+                    estimated_delivery_at TEXT,
                     return_window_days INTEGER NOT NULL,
                     amount_minor INTEGER NOT NULL,
                     currency TEXT NOT NULL,
@@ -64,6 +76,9 @@ class Database:
                 );
                 """
             )
+            from app.persistence.users import seed_demo_customers
+
+            seed_demo_customers(connection)
             existing_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(orders)")
             }
@@ -75,11 +90,12 @@ class Database:
                 "inspection_passed",
                 "refund_initiated",
                 "refund_initiated_date",
+                "estimated_delivery_at",
             ):
                 if column not in existing_columns:
-                    if column == "refund_initiated_date":
+                    if column in {"refund_initiated_date", "estimated_delivery_at"}:
                         connection.execute(
-                            "ALTER TABLE orders ADD COLUMN refund_initiated_date TEXT"
+                            f"ALTER TABLE orders ADD COLUMN {column} TEXT"
                         )
                     else:
                         connection.execute(
@@ -117,7 +133,15 @@ class Database:
                  refund_initiated, refund_initiated_date)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                _demo_orders(),
+                [*_demo_orders(), *_multi_customer_orders()],
+            )
+            connection.execute(
+                """
+                UPDATE orders
+                SET estimated_delivery_at = date('now', '+3 days')
+                WHERE status IN ('shipped', 'in_transit')
+                  AND estimated_delivery_at IS NULL
+                """
             )
             connection.execute(
                 "UPDATE orders SET customer_id = 'customer-1002' WHERE order_id = 'ORD-1002'"
@@ -348,3 +372,71 @@ def _demo_orders() -> list[tuple]:
             None,
         ),
     ]
+
+
+def _multi_customer_orders() -> list[tuple]:
+    today = date.today()
+    catalog = (
+        "Cotton shirt",
+        "Denim jeans",
+        "Linen trousers",
+        "Printed dress",
+        "Running shoes",
+        "Wool cardigan",
+        "Leather belt",
+        "Running shorts",
+        "Knit top",
+        "Pleated skirt",
+    )
+    orders: list[tuple] = []
+    for customer_number, first_order_number in ((1, 1101), (2, 2101), (3, 3101)):
+        for order_index, item_name in enumerate(catalog):
+            status = "delivered"
+            delivered_at = (today - timedelta(days=5)).isoformat()
+            item_unused = tags_attached = return_received = inspection_passed = 1
+            final_sale = refund_initiated = 0
+            initiated_at = None
+
+            if order_index == 1:
+                final_sale = 1
+            elif order_index == 2:
+                status, delivered_at = "shipped", None
+                item_unused = tags_attached = return_received = inspection_passed = 0
+            elif order_index == 3:
+                delivered_at = (today - timedelta(days=45)).isoformat()
+            elif order_index == 4:
+                tags_attached = 0
+            elif order_index == 5:
+                inspection_passed = 0
+            elif order_index == 6:
+                return_received = 0
+            elif order_index == 7:
+                status, delivered_at = "in_transit", None
+                item_unused = tags_attached = return_received = inspection_passed = 0
+            elif order_index == 8:
+                delivered_at = (today - timedelta(days=3)).isoformat()
+                return_received = 0
+            elif order_index == 9:
+                delivered_at = (today - timedelta(days=10)).isoformat()
+                return_received = inspection_passed = 0
+
+            orders.append(
+                (
+                    f"ORD-{first_order_number + order_index}",
+                    f"customer-{customer_number}",
+                    f"{item_name} (Customer {customer_number})",
+                    status,
+                    delivered_at,
+                    30,
+                    (249900 + customer_number * 1000 + order_index * 2500),
+                    "INR",
+                    item_unused,
+                    tags_attached,
+                    final_sale,
+                    return_received,
+                    inspection_passed,
+                    refund_initiated,
+                    initiated_at,
+                )
+            )
+    return orders

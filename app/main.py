@@ -16,6 +16,7 @@ from app.config import Settings, get_settings
 from app.llm.ollama import OllamaClient
 from app.persistence.database import Database
 from app.persistence.orders import OrderRepository
+from app.persistence.users import UserRepository
 from app.retrieval.policies import PolicyStore
 from app.workflow.router import SupportWorkflow
 
@@ -26,6 +27,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     database = Database(settings.database_path)
     repository = OrderRepository(database)
+    user_repository = UserRepository(database)
     order_tool = OrderTool(repository)
     policy_tool = PolicyTool(
         store_factory=lambda: PolicyStore(
@@ -61,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.state.settings = settings
     application.state.order_repository = repository
+    application.state.user_repository = user_repository
     application.state.workflow = workflow
     application.include_router(router)
     return application

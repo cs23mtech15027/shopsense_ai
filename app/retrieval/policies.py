@@ -10,6 +10,9 @@ from fastembed import TextEmbedding
 import pdfplumber
 from qdrant_client import QdrantClient, models
 
+_RETURN_POLICY_QUERY = re.compile(r"\b(return|refund|refudn|refun|exchange)\b", re.IGNORECASE)
+_REFUND_TYPO = re.compile(r"\b(?:refudn|refun)\b", re.IGNORECASE)
+
 
 class PolicyStore:
     def __init__(
@@ -29,14 +32,15 @@ class PolicyStore:
 
     def search(self, query: str, limit: int) -> list[dict[str, str]]:
         self._ensure_index()
-        vector = list(self.embedding.query_embed(query))[0].tolist()
+        normalized_query = _REFUND_TYPO.sub("refund", query)
+        vector = list(self.embedding.query_embed(normalized_query))[0].tolist()
         result = self.client.query_points(
             collection_name=self.collection_name,
             query=vector,
             limit=limit,
             with_payload=True,
         )
-        return [
+        passages = [
             {
                 "text": point.payload["text"],
                 "source": point.payload["source"],
@@ -44,6 +48,13 @@ class PolicyStore:
             for point in result.points
             if point.payload and "text" in point.payload and "source" in point.payload
         ]
+        if _RETURN_POLICY_QUERY.search(query):
+            passages = _ensure_return_policy_passage(
+                passages,
+                self.policy_directory / "returns.txt",
+                limit,
+            )
+        return passages
 
     def _ensure_index(self) -> None:
         if self._initialized:
@@ -157,6 +168,19 @@ def _extract_csv_documents(path: Path) -> list[tuple[str, str, str]]:
                 )
             )
     return documents
+
+
+def _ensure_return_policy_passage(
+    passages: list[dict[str, str]],
+    policy_path: Path,
+    limit: int,
+) -> list[dict[str, str]]:
+    if any(item["source"].startswith("returns.txt:") for item in passages):
+        return passages[:1]
+    chunks = _chunks(policy_path.read_text(encoding="utf-8"))
+    if not chunks:
+        return passages[:limit]
+    return [{"source": "returns.txt:1", "text": chunks[0]}]
 
 
 def _extract_pdf_documents(path: Path) -> list[tuple[str, str, str]]:

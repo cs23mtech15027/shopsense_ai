@@ -9,10 +9,17 @@ class OrderAgent:
         self.order_tool = order_tool
 
     async def handle(self, state: dict) -> dict:
-        order_id = self.order_tool.extract_order_id(state["message"])
+        order_id = (
+            self.order_tool.extract_order_id(state["message"])
+            or (
+                state.get("active_order_id")
+                if state.get("use_active_order")
+                else None
+            )
+        )
         if order_id is None:
             return {
-                "answer": "Please share the order ID (for example, ORD-1001) so I can look it up.",
+                "answer": "Please share the order ID (for example, ORD-1101) so I can look it up.",
                 "status": "needs_information",
                 "sources": [],
             }
@@ -31,10 +38,15 @@ class OrderAgent:
                 "status": "needs_information",
                 "sources": [],
             }
-        delivered = order["delivered_at"] or "not yet delivered"
+        if order["status"] == "delivered":
+            delivery = f"Delivery date: {order['delivered_at']}."
+        elif order["estimated_delivery_at"]:
+            delivery = f"Estimated delivery: {order['estimated_delivery_at']}."
+        else:
+            delivery = "An estimated delivery date is not available yet."
         answer = (
             f"Order {order['order_id']} ({order['item_name']}) is currently "
-            f"{order['status']}. Delivery date: {delivered}."
+            f"{order['status']}. {delivery}"
         )
         if order["refund_initiated"]:
             answer += (

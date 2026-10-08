@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app.retrieval.policies import (
+    _ensure_return_policy_passage,
     _chunks,
     _extract_csv_documents,
     _extract_pdf_documents,
@@ -52,3 +53,19 @@ def test_chunking_respects_maximum_size_and_overlaps_paragraph_boundaries():
     assert all(len(chunk.split()) <= 100 for chunk in chunks)
     assert "term0_79" in chunks[0]
     assert any("term0_79" in chunk and "term1_0" in chunk for chunk in chunks[1:])
+
+
+def test_generic_return_search_uses_canonical_return_policy_source():
+    passages = _ensure_return_policy_passage(
+        [
+            {"source": "shop_return_and_refund_handbook.pdf:p1:table1:row4", "text": "Outerwear"},
+            {"source": "return_eligibility.csv:row5", "text": "Footwear"},
+        ],
+        POLICY_DIRECTORY / "returns.txt",
+        limit=3,
+    )
+
+    assert len(passages) == 1
+    assert passages[0]["source"] == "returns.txt:1"
+    assert "original payment method" in passages[0]["text"]
+    assert "Final-sale items" in passages[0]["text"]

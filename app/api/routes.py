@@ -10,6 +10,8 @@ from app.schemas import (
     ApprovalResponse,
     ChatRequest,
     ChatResponse,
+    DemoSessionRequest,
+    DemoSessionResponse,
 )
 
 router = APIRouter()
@@ -20,20 +22,51 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.post("/v1/auth/demo-session", response_model=DemoSessionResponse)
+async def create_demo_session(
+    payload: DemoSessionRequest,
+    request: Request,
+) -> DemoSessionResponse:
+    access_token = await asyncio.to_thread(
+        request.app.state.user_repository.create_demo_session,
+        payload.customer_id,
+    )
+    if access_token is None:
+        raise HTTPException(status_code=404, detail="Demo customer was not found.")
+    return DemoSessionResponse(
+        customer_id=payload.customer_id,
+        access_token=access_token,
+    )
+
+
 @router.post("/v1/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
+async def chat(
+    payload: ChatRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> ChatResponse:
     settings = request.app.state.settings
     message = validate_message(payload.message, settings.max_message_chars)
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Please log in to continue.")
+    customer_id = await asyncio.to_thread(
+        request.app.state.user_repository.get_session_customer,
+        authorization.removeprefix("Bearer ").strip(),
+    )
+    if customer_id is None:
+        raise HTTPException(status_code=401, detail="Your session has expired. Please log in again.")
+    if payload.customer_id is not None and payload.customer_id != customer_id:
+        raise HTTPException(status_code=403, detail="This order account is not authorized.")
     try:
         result = await request.app.state.workflow.graph.ainvoke(
             {
-                "customer_id": payload.customer_id,
+                "customer_id": customer_id,
                 "message": message,
                 "query_type": payload.query_type,
             },
             {
                 "configurable": {
-                    "thread_id": f"{payload.customer_id}:{payload.conversation_id}"
+                    "thread_id": f"{customer_id}:{payload.conversation_id}"
                 }
             },
         )
