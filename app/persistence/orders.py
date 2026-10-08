@@ -17,8 +17,18 @@ class OrderRepository:
     def create_approval(self, order_id: str, customer_id: str) -> str:
         from uuid import uuid4
 
-        approval_id = str(uuid4())
         with self.database.connect() as connection:
+            pending = connection.execute(
+                """
+                SELECT approval_id FROM approvals
+                WHERE order_id = ? AND customer_id = ? AND status = 'pending'
+                """,
+                (order_id.upper(), customer_id),
+            ).fetchone()
+            if pending is not None:
+                return pending["approval_id"]
+
+            approval_id = str(uuid4())
             connection.execute(
                 """
                 INSERT INTO approvals
@@ -70,8 +80,14 @@ class OrderRepository:
                 ),
             )
             connection.execute(
-                "UPDATE orders SET refund_status = 'refunded' WHERE order_id = ?",
-                (order["order_id"],),
+                """
+                UPDATE orders
+                SET refund_status = 'initiated',
+                    refund_initiated = 1,
+                    refund_initiated_date = ?
+                WHERE order_id = ?
+                """,
+                (date.today().isoformat(), order["order_id"]),
             )
             connection.execute(
                 "UPDATE approvals SET status = 'approved' WHERE approval_id = ?",
@@ -82,6 +98,7 @@ class OrderRepository:
                 "approval": approval,
                 "amount_minor": order["amount_minor"],
                 "currency": order["currency"],
+                "refund_initiated_date": date.today().isoformat(),
             }
 
     @staticmethod
@@ -89,6 +106,10 @@ class OrderRepository:
         if (
             order["status"] != "delivered"
             or order["refund_status"] != "none"
+            or (
+                "refund_initiated" in order.keys()
+                and order["refund_initiated"]
+            )
             or not order["item_unused"]
             or not order["tags_attached"]
             or order["final_sale"]

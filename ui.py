@@ -11,7 +11,7 @@ settings = get_settings()
 api_url = settings.api_url.rstrip("/")
 
 
-async def _post_chat(message: str, conversation_id: str) -> dict:
+async def _post_chat(message: str, conversation_id: str, query_type: str) -> dict:
     async with httpx.AsyncClient(timeout=90) as client:
         response = await client.post(
             f"{api_url}/v1/chat",
@@ -19,6 +19,7 @@ async def _post_chat(message: str, conversation_id: str) -> dict:
                 "customer_id": settings.demo_customer_id,
                 "conversation_id": conversation_id,
                 "message": message,
+                "query_type": query_type,
             },
         )
         response.raise_for_status()
@@ -59,6 +60,23 @@ def _error_message(error: httpx.HTTPStatusError) -> str:
 @cl.on_chat_start
 async def on_chat_start() -> None:
     cl.user_session.set("conversation_id", str(uuid4()))
+    settings_panel = cl.ChatSettings(
+        [
+            cl.input_widget.Select(
+                id="query_type",
+                label="Help topic",
+                items={
+                    "Automatic": "auto",
+                    "Order status / delivery": "order",
+                    "Return / refund": "refund",
+                    "Policy / shipping / other care": "care",
+                },
+                initial_value="auto",
+            )
+        ]
+    )
+    configured = await settings_panel.send()
+    cl.user_session.set("query_type", configured.get("query_type", "auto"))
     await cl.Message(
         content=(
             "Welcome to ShopSense. Ask about an order or a store policy. "
@@ -67,6 +85,11 @@ async def on_chat_start() -> None:
             "authentication. Type `/new` to start a fresh conversation."
         )
     ).send()
+
+
+@cl.on_settings_update
+async def on_settings_update(updated_settings: dict) -> None:
+    cl.user_session.set("query_type", updated_settings.get("query_type", "auto"))
 
 
 @cl.on_message
@@ -83,7 +106,11 @@ async def on_message(message: cl.Message) -> None:
         cl.user_session.set("conversation_id", conversation_id)
 
     try:
-        result = await _post_chat(text, conversation_id)
+        result = await _post_chat(
+            text,
+            conversation_id,
+            cl.user_session.get("query_type", "auto"),
+        )
     except httpx.HTTPStatusError as error:
         await cl.Message(content=_error_message(error)).send()
         return

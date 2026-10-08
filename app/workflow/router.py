@@ -60,7 +60,10 @@ class SupportWorkflow:
     @staticmethod
     async def _triage(state: SupportState) -> dict:
         message = state["message"]
-        if _REFUND_TERMS.search(message) and (
+        query_type = state.get("query_type", "auto")
+        if query_type in {"care", "order", "refund"}:
+            intent = query_type
+        elif _REFUND_TERMS.search(message) and (
             _ORDER_ID.search(message)
             or _REFUND_ACTION.search(message)
             or not _POLICY_QUESTION.search(message)

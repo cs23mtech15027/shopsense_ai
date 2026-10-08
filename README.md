@@ -50,11 +50,20 @@ The LangGraph workflow persists the most recent six conversational turns per
 conversation in a separate SQLite checkpointer. Reuse the response's
 `conversation_id` on follow-up chat requests. The first policy retrieval
 initializes the Qdrant collection and downloads the FastEmbed model; subsequent
-retrievals reuse the local model and indexed chunks. Policy ingestion reads `.txt`
-and `.pdf` files from `data/policies/`, splitting PDFs by page before chunking and
-retaining file/page source labels. Changed source content triggers a collection
-re-index. Health is available at `GET /health`. Demo orders and policy text are under
-`data/`; do not use them as production policy or customer records.
+retrievals reuse the local model and indexed chunks. Policy ingestion reads `.txt`,
+`.pdf`, and `.csv` files from `data/policies/`. PDF text is extracted page by page;
+PDF and CSV table rows are converted to header/value records so each embedding
+retains the column context. Prose uses paragraph-aware chunks with a 30-word
+overlap. Changed source content triggers a collection re-index. Health is
+available at `GET /health`. Demo orders and policy text are under `data/`; do not
+use them as production policy or customer records.
+
+The sample policy handbook PDF contains formatted tables and can be regenerated
+after installing the development extras with:
+
+```powershell
+python tools/generate_policy_handbook.py
+```
 
 ## API examples
 
@@ -76,15 +85,24 @@ setting to connect to the API. The default API address is `http://localhost:8000
 To connect the UI to a different API address, set `SHOPSENSE_API_URL` in `.env`
 before starting Chainlit.
 
+The Chainlit **Help topic** selector can route automatically or explicitly select
+order status/delivery, refund/return, or care/policy. Automatic routing remains
+the default.
+
 Refund flow:
 
-1. Ask to return/refund an order and include its order ID. Demo order `ORD-1001`
-   represents an item already returned and inspected; the other sample orders are
-   not refund-eligible.
-2. The assistant returns a `pending_approval` request if the order is eligible.
-3. Call `POST /v1/approvals/{approval_id}` with `{"approved": true}` and the
-   configured `X-Approval-Token` header to record the demo refund. Declining
-   cancels it. Repeated approvals are idempotent.
+1. Ask to return/refund an order and include its order ID. Twelve demo orders
+   (`ORD-1001`–`ORD-1012`) have distinct customer IDs and products, and cover
+   shipped, in-transit, eligible, outside-window, final-sale, missing-tag,
+   inspection-pending, and already-initiated examples.
+2. If deterministic eligibility checks pass, the assistant creates or reuses a
+   pending approval. A pending request does not set `refund_initiated`.
+3. Approve with `POST /v1/approvals/{approval_id}`, `{"approved": true}`, and the
+   configured `X-Approval-Token` header. Only then are `refund_initiated=1`,
+   `refund_initiated_date`, and the refund ledger record written. Declining leaves
+   the order flags unchanged; repeating an approval is idempotent.
+4. This records a demo refund initiation only. It does not call a payment provider
+   or transfer funds.
 
 ## Design and safety notes
 
@@ -95,10 +113,13 @@ Refund flow:
   call the refund operation until a persisted approval is approved.
 - The refund repository uses a transaction and an idempotency key.
 - Refund eligibility checks delivery date, unused condition, original tags,
-  final-sale status, return receipt, inspection outcome, and prior refund status.
+  final-sale status, return receipt, inspection outcome, prior refund status, and
+  the initiated flag.
 - Refund approval calls require the configured `X-Approval-Token` header. Approval
   is disabled when no token is configured.
-- Policy chunks are embedded locally, indexed in Qdrant, and cited by source.
+- Text, PDF, and CSV policy chunks/records are embedded locally, indexed in
+  Qdrant, and cited by source. CSV/PDF table records retain each column name beside
+  its value, avoiding embeddings of detached cell text.
 - The chat model receives the current request, up to two recent conversational
   turns, and a small set of retrieved policy chunks; order/refund agents do not
   send conversation history to a model.
@@ -130,6 +151,7 @@ app/
   retrieval/
   workflow/
 data/
+tools/
 tests/
 ui.py
 run_ui.py

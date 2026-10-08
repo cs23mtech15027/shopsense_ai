@@ -1,0 +1,6 @@
+Scenario,What support may confirm,What must be checked,Do not promise
+Order processing,Whether the order is processing,Current order record,Exact dispatch time without a verified estimate
+Shipped order,That carrier handoff is recorded,Current carrier tracking scan,Delivery date based only on shipped status
+Delayed shipment,That the latest verified scan is delayed,Carrier scan and service exception,Compensation or a new delivery date without policy authorization
+Delivered but not received,That the system marks delivered,Delivery scan and verified recipient details,Immediate refund before a delivery investigation
+Address correction,Whether a change is still permitted,Fulfilment state and carrier capability,An address change after dispatch without confirmation

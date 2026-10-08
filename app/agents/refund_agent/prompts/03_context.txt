@@ -1,4 +1,7 @@
 Refund eligibility is currently defined in the deterministic order service. It
 requires delivery within the configured return window, unused condition, attached
 original tags, a non-final-sale item, return receipt, and a passed inspection.
-This is demo behavior and must be replaced with approved retailer policy.
+An eligible request remains pending until the authorized approval endpoint is used.
+Approval sets refund_initiated and refund_initiated_date; it does not transfer money
+because the prototype has no payment-provider integration. This is demo behavior
+and must be replaced with approved retailer policy.

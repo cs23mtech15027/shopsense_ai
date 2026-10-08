@@ -1,0 +1,21 @@
+Refund Processing and Status
+
+A return request and a refund are separate stages. A customer first submits a return
+request. The retailer verifies the order, applicable category policy, delivery date,
+condition, tags, final-sale status, receipt of the returned item, and inspection
+result. Submitting a request does not mean it is approved.
+
+After the returned item is received and inspection passes, an authorized support
+employee may approve initiation of the refund. The refund initiation record must
+include the order number, approved amount, currency, approval timestamp, and an
+idempotency key. Repeated approvals must not create duplicate refund operations.
+
+Refund initiation means that the approved refund instruction has been handed to the
+payment workflow. It does not prove that funds have settled to the customer's
+account. Support must distinguish requested, pending approval, initiated, and
+settled states. A settlement date must only be shown when confirmed by the payment
+provider.
+
+The prototype records a demo refund initiation in its local database. It is not
+connected to a payment processor, does not move money, and must not be described as
+a completed or settled refund.

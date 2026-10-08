@@ -8,6 +8,7 @@ class ChatRequest(BaseModel):
     customer_id: str = Field(min_length=1, max_length=100)
     conversation_id: str = Field(default_factory=lambda: str(uuid4()), min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=4000)
+    query_type: Literal["auto", "care", "order", "refund"] = "auto"
 
 
 class ChatResponse(BaseModel):

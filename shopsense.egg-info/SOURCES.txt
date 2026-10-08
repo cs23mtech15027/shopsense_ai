@@ -54,4 +54,5 @@ shopsense.egg-info/requires.txt
 shopsense.egg-info/top_level.txt
 tests/test_agents.py
 tests/test_guardrails.py
+tests/test_policy_ingestion.py
 tests/test_workflow.py

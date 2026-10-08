@@ -36,5 +36,10 @@ class OrderAgent:
             f"Order {order['order_id']} ({order['item_name']}) is currently "
             f"{order['status']}. Delivery date: {delivered}."
         )
+        if order["refund_initiated"]:
+            answer += (
+                f" Refund initiation was recorded on "
+                f"{order['refund_initiated_date']}."
+            )
         on_agent_complete("answered")
         return {"answer": answer, "status": "answered", "sources": []}

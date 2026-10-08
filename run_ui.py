@@ -1,7 +1,10 @@
+import importlib
+
 import uvicorn
 
-import ui  # noqa: F401
 from chainlit.server import app
+
+importlib.import_module("ui")
 
 
 if __name__ == "__main__":

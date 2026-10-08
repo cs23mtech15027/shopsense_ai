@@ -1,10 +1,13 @@
+import csv
 import hashlib
+import io
+import re
 import threading
 import uuid
 from pathlib import Path
 
 from fastembed import TextEmbedding
-from pypdf import PdfReader
+import pdfplumber
 from qdrant_client import QdrantClient, models
 
 
@@ -66,16 +69,17 @@ class PolicyStore:
     def _load_documents(self) -> list[tuple[str, str, str]]:
         documents: list[tuple[str, str, str]] = []
         paths = sorted(
-            (*self.policy_directory.glob("*.txt"), *self.policy_directory.glob("*.pdf"))
+            (
+                *self.policy_directory.glob("*.txt"),
+                *self.policy_directory.glob("*.pdf"),
+                *self.policy_directory.glob("*.csv"),
+            )
         )
         for path in paths:
             if path.suffix.lower() == ".pdf":
-                reader = PdfReader(path)
-                for page_number, page in enumerate(reader.pages, start=1):
-                    text = page.extract_text() or ""
-                    for chunk_number, chunk in enumerate(_chunks(text), start=1):
-                        source = f"{path.name}:p{page_number}:c{chunk_number}"
-                        documents.append((path.name, source, chunk))
+                documents.extend(_extract_pdf_documents(path))
+            elif path.suffix.lower() == ".csv":
+                documents.extend(_extract_csv_documents(path))
             else:
                 text = path.read_text(encoding="utf-8")
                 for index, chunk in enumerate(_chunks(text), start=1):
@@ -117,9 +121,171 @@ class PolicyStore:
         return str(uuid.UUID(hex=digest))
 
 
-def _chunks(text: str, max_words: int = 180) -> list[str]:
-    words = text.split()
-    return [
-        " ".join(words[index : index + max_words])
-        for index in range(0, len(words), max_words)
+def _extract_csv_documents(path: Path) -> list[tuple[str, str, str]]:
+    content = path.read_text(encoding="utf-8-sig")
+    sample = content[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    reader = csv.DictReader(io.StringIO(content), dialect=dialect)
+    headers = [header.strip() for header in reader.fieldnames or [] if header]
+    if not headers:
+        raise ValueError(f"CSV policy file {path.name} is missing a header row.")
+    reader.fieldnames = headers
+
+    documents = [
+        (
+            path.name,
+            f"{path.name}:schema",
+            f"CSV policy table from {path.name}. Columns: {', '.join(headers)}.",
+        )
     ]
+    for row_number, row in enumerate(reader, start=1):
+        fields = [
+            f"{header}: {_clean_cell(row.get(header))}"
+            for header in headers
+            if _clean_cell(row.get(header))
+        ]
+        if fields:
+            documents.append(
+                (
+                    path.name,
+                    f"{path.name}:row{row_number}",
+                    f"Policy table {path.stem}, record {row_number}. "
+                    + "; ".join(fields),
+                )
+            )
+    return documents
+
+
+def _extract_pdf_documents(path: Path) -> list[tuple[str, str, str]]:
+    documents: list[tuple[str, str, str]] = []
+    with pdfplumber.open(path) as pdf:
+        for page_number, page in enumerate(pdf.pages, start=1):
+            tables = page.find_tables()
+            page_text = _page_text_without_tables(page, [table.bbox for table in tables])
+            for chunk_number, chunk in enumerate(_chunks(page_text), start=1):
+                documents.append(
+                    (
+                        path.name,
+                        f"{path.name}:p{page_number}:text{chunk_number}",
+                        f"Document: {path.stem}. Page: {page_number}.\n{chunk}",
+                    )
+                )
+            for table_number, table in enumerate(tables, start=1):
+                documents.extend(
+                    _table_documents(
+                        path.name,
+                        page_number,
+                        table_number,
+                        table.extract(),
+                    )
+                )
+    return documents
+
+
+def _page_text_without_tables(page, table_bboxes: list[tuple[float, float, float, float]]) -> str:
+    words_by_line: dict[int, list[dict]] = {}
+    for word in page.extract_words():
+        center_x = (word["x0"] + word["x1"]) / 2
+        center_y = (word["top"] + word["bottom"]) / 2
+        if any(
+            left <= center_x <= right and top <= center_y <= bottom
+            for left, top, right, bottom in table_bboxes
+        ):
+            continue
+        line_number = round(word["top"] / 3)
+        words_by_line.setdefault(line_number, []).append(word)
+    return "\n".join(
+        " ".join(word["text"] for word in sorted(line, key=lambda item: item["x0"]))
+        for _, line in sorted(words_by_line.items())
+    )
+
+
+def _table_documents(
+    filename: str,
+    page_number: int,
+    table_number: int,
+    table: list[list[str | None]],
+) -> list[tuple[str, str, str]]:
+    rows = [
+        [_clean_cell(cell) for cell in row]
+        for row in table
+        if any(_clean_cell(cell) for cell in row)
+    ]
+    if not rows:
+        return []
+
+    headers = [value or f"Column {index + 1}" for index, value in enumerate(rows[0])]
+    prefix = f"{filename}:p{page_number}:table{table_number}"
+    table_title = f"Table from {filename}, page {page_number}"
+    documents = []
+    for row_number, values in enumerate(rows[1:], start=1):
+        fields = [
+            f"{headers[index] if index < len(headers) else f'Column {index + 1}'}: {value}"
+            for index, value in enumerate(values)
+            if value
+        ]
+        if fields:
+            documents.append(
+                (
+                    filename,
+                    f"{prefix}:row{row_number}",
+                    f"{table_title}, record {row_number}. " + "; ".join(fields),
+                )
+            )
+    return documents
+
+
+def _clean_cell(value: str | None) -> str:
+    return re.sub(r"\s+", " ", value or "").strip()
+
+
+def _chunks(
+    text: str,
+    max_words: int = 180,
+    overlap_words: int = 30,
+) -> list[str]:
+    if max_words < 1 or overlap_words < 0 or overlap_words >= max_words:
+        raise ValueError("Chunk size must be positive and overlap smaller than chunk size.")
+
+    paragraphs = [
+        re.sub(r"\s+", " ", paragraph).strip()
+        for paragraph in re.split(r"\n\s*\n", text)
+        if paragraph.strip()
+    ]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_word_count = 0
+
+    def flush() -> None:
+        nonlocal current, current_word_count
+        if current:
+            chunks.append(" ".join(current))
+            current = []
+            current_word_count = 0
+
+    for paragraph in paragraphs:
+        words = paragraph.split()
+        if len(words) > max_words:
+            flush()
+            step = max_words - overlap_words
+            for start in range(0, len(words), step):
+                chunk_words = words[start : start + max_words]
+                if chunk_words:
+                    chunks.append(" ".join(chunk_words))
+            continue
+
+        if current and current_word_count + len(words) > max_words:
+            previous_words = " ".join(current).split()
+            flush()
+            overlap = previous_words[-overlap_words:] if overlap_words else []
+            if overlap and len(overlap) + len(words) <= max_words:
+                current = [" ".join(overlap)]
+                current_word_count = len(overlap)
+        current.append(paragraph)
+        current_word_count += len(words)
+
+    flush()
+    return chunks

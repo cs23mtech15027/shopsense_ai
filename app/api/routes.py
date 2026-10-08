@@ -26,7 +26,11 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     message = validate_message(payload.message, settings.max_message_chars)
     try:
         result = await request.app.state.workflow.graph.ainvoke(
-            {"customer_id": payload.customer_id, "message": message},
+            {
+                "customer_id": payload.customer_id,
+                "message": message,
+                "query_type": payload.query_type,
+            },
             {
                 "configurable": {
                     "thread_id": f"{payload.customer_id}:{payload.conversation_id}"
@@ -79,8 +83,9 @@ async def approval(
     if status == "approved":
         amount = result["amount_minor"] / 100
         answer = (
-            f"Refund approved and recorded for {result['currency']} {amount:.2f}. "
-            "The payment provider is not connected in this demo."
+            f"Refund initiation was approved and recorded for {result['currency']} "
+            f"{amount:.2f} on {result['refund_initiated_date']}. "
+            "No money was transferred: this prototype is not connected to a payment provider."
         )
     elif status == "declined":
         answer = "The refund request was declined. No refund was issued."

@@ -50,8 +50,8 @@ class RefundAgent:
         amount = order["amount_minor"] / 100
         answer = (
             f"Order {order_id} is eligible for a refund of {order['currency']} {amount:.2f}. "
-            "The return has been received and inspected. No refund has been issued; "
-            "an authorized person must approve this request."
+            "The return has been received and inspected. Refund initiation is pending "
+            "authorized approval; no refund has been initiated yet."
         )
         on_agent_complete("pending_approval")
         return {
