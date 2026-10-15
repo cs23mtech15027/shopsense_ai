@@ -1,8 +1,10 @@
 import csv
 import hashlib
 import io
+import logging
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from fastembed import TextEmbedding
 import pdfplumber
 from qdrant_client import QdrantClient, models
 
+logger = logging.getLogger("shopsense.retrieval.policies")
 _RETURN_POLICY_QUERY = re.compile(r"\b(return|refund|refudn|refun|exchange)\b", re.IGNORECASE)
 _REFUND_TYPO = re.compile(r"\b(?:refudn|refun)\b", re.IGNORECASE)
 
@@ -31,6 +34,8 @@ class PolicyStore:
         self._initialization_lock = threading.Lock()
 
     def search(self, query: str, limit: int) -> list[dict[str, str]]:
+        started = time.perf_counter()
+        logger.info("Policy retrieval started limit=%d", limit)
         self._ensure_index()
         normalized_query = _REFUND_TYPO.sub("refund", query)
         vector = list(self.embedding.query_embed(normalized_query))[0].tolist()
@@ -54,6 +59,11 @@ class PolicyStore:
                 self.policy_directory / "returns.txt",
                 limit,
             )
+        logger.info(
+            "Policy retrieval completed passages=%d elapsed_ms=%.0f",
+            len(passages),
+            (time.perf_counter() - started) * 1000,
+        )
         return passages
 
     def _ensure_index(self) -> None:
@@ -62,6 +72,8 @@ class PolicyStore:
         with self._initialization_lock:
             if self._initialized:
                 return
+            started = time.perf_counter()
+            logger.info("Policy index initialization started")
             documents = self._load_documents()
             expected_ids = {self._point_id(document) for document in documents}
             if self.client.collection_exists(self.collection_name):
@@ -76,6 +88,11 @@ class PolicyStore:
             if expected_ids:
                 self._index_documents(documents)
             self._initialized = True
+            logger.info(
+                "Policy index initialization completed documents=%d elapsed_ms=%.0f",
+                len(documents),
+                (time.perf_counter() - started) * 1000,
+            )
 
     def _load_documents(self) -> list[tuple[str, str, str]]:
         documents: list[tuple[str, str, str]] = []
@@ -140,7 +157,11 @@ def _extract_csv_documents(path: Path) -> list[tuple[str, str, str]]:
     except csv.Error:
         dialect = csv.excel
     reader = csv.DictReader(io.StringIO(content), dialect=dialect)
-    headers = [header.strip() for header in reader.fieldnames or [] if header]
+    headers = [
+        header.strip()
+        for header in reader.fieldnames or []
+        if header and header.strip()
+    ]
     if not headers:
         raise ValueError(f"CSV policy file {path.name} is missing a header row.")
     reader.fieldnames = headers
@@ -175,8 +196,12 @@ def _ensure_return_policy_passage(
     policy_path: Path,
     limit: int,
 ) -> list[dict[str, str]]:
-    if any(item["source"].startswith("returns.txt:") for item in passages):
-        return passages[:1]
+    canonical_passage = next(
+        (item for item in passages if item["source"].startswith("returns.txt:")),
+        None,
+    )
+    if canonical_passage is not None:
+        return [canonical_passage]
     chunks = _chunks(policy_path.read_text(encoding="utf-8"))
     if not chunks:
         return passages[:limit]

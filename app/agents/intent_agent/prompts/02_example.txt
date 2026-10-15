@@ -1,0 +1,17 @@
+Examples of intent decisions:
+
+Current message: "Hello"
+Context: no previous conversation
+Decision: {"intent":"care","order_id":"","is_greeting":true,"return_eligibility_requested":false}
+
+Current message: "Where is order ORD-1101?"
+Context: no previous conversation
+Decision: {"intent":"order","order_id":"ORD-1101","is_greeting":false,"return_eligibility_requested":false}
+
+Current message: "Can I return this order?"
+Context: the current conversation discussed ORD-1101
+Decision: {"intent":"care","order_id":"ORD-1101","is_greeting":false,"return_eligibility_requested":true}
+
+Current message: "What is your general return policy?"
+Context: no order has been selected in this conversation
+Decision: {"intent":"care","order_id":"","is_greeting":false,"return_eligibility_requested":false}

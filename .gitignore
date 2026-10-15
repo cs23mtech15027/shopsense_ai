@@ -5,5 +5,7 @@ __pycache__/
 *.py[cod]
 data/*.db
 data/models/
+memories/
+logs/
 chainlit.md
 .chainlit/

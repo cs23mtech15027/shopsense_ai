@@ -163,6 +163,94 @@ class Database:
                 """
             )
 
+    def reset_demo_orders(self) -> int:
+        self.initialize()
+        seeded_orders = [*_demo_orders(), *_multi_customer_orders()]
+        order_ids = [order[0] for order in seeded_orders]
+        placeholders = ", ".join("?" for _ in order_ids)
+        with self.connect() as connection:
+            connection.execute(
+                f"DELETE FROM approvals WHERE order_id IN ({placeholders})",
+                order_ids,
+            )
+            connection.execute(
+                f"DELETE FROM refunds WHERE order_id IN ({placeholders})",
+                order_ids,
+            )
+            for (
+                order_id,
+                customer_id,
+                item_name,
+                status,
+                delivered_at,
+                return_window_days,
+                amount_minor,
+                currency,
+                item_unused,
+                tags_attached,
+                final_sale,
+                return_received,
+                inspection_passed,
+                refund_initiated,
+                refund_initiated_date,
+            ) in seeded_orders:
+                estimated_delivery_at = (
+                    (date.today() + timedelta(days=3)).isoformat()
+                    if status in {"shipped", "in_transit"}
+                    else None
+                )
+                connection.execute(
+                    """
+                    UPDATE orders
+                    SET customer_id = ?,
+                        item_name = ?,
+                        status = ?,
+                        delivered_at = ?,
+                        estimated_delivery_at = ?,
+                        return_window_days = ?,
+                        amount_minor = ?,
+                        currency = ?,
+                        refund_status = ?,
+                        item_unused = ?,
+                        tags_attached = ?,
+                        final_sale = ?,
+                        return_received = ?,
+                        inspection_passed = ?,
+                        refund_initiated = ?,
+                        refund_initiated_date = ?
+                    WHERE order_id = ?
+                    """,
+                    (
+                        customer_id,
+                        item_name,
+                        status,
+                        delivered_at,
+                        estimated_delivery_at,
+                        return_window_days,
+                        amount_minor,
+                        currency,
+                        "initiated" if refund_initiated else "none",
+                        item_unused,
+                        tags_attached,
+                        final_sale,
+                        return_received,
+                        inspection_passed,
+                        refund_initiated,
+                        refund_initiated_date,
+                        order_id,
+                    ),
+                )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO refunds
+                (idempotency_key, order_id, amount_minor, currency)
+                SELECT 'demo-refund:ORD-1006', order_id, amount_minor, currency
+                FROM orders
+                WHERE order_id = 'ORD-1006' AND refund_initiated = 1
+                """
+            )
+        return len(seeded_orders)
+
 
 def _demo_orders() -> list[tuple]:
     today = date.today()

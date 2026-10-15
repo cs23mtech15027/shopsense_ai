@@ -7,16 +7,25 @@ Qdrant; and requires explicit approval before it executes a refund.
 ## Architecture
 
 ```text
-FastAPI -> input guardrails -> LangGraph intent/sentiment triage
-                                | care: Qdrant policy retrieval -> Ollama answer
-                                | order: deterministic order lookup
-                                | refund: deterministic eligibility -> approval
-                         output guardrails -> customer
+FastAPI -> LLM safety gate -> manual input checks -> checkpointed LangGraph state
+                                                     | care: policy retrieval
+                                                     | order: verified order lookup
+                                                     | refund: eligibility -> approval
+                                      verified facts -> Ollama response generation
+Chainlit <--------------------------- SSE response stream
 ```
 
-The model is an explainer, not an authority for order or refund decisions. Orders
-and approvals in this prototype are demo data persisted in SQLite. Replace the
-repository adapter with an authenticated commerce API before handling real orders.
+All customer-facing answers are composed by the configured Ollama model from
+verified policy/order/refund facts. The model is not an authority for order or
+refund decisions. Orders and approvals in this prototype are demo data persisted
+in SQLite. Replace the repository adapter with an authenticated commerce API
+before handling real orders.
+
+For an order-specific return question, care retrieves the relevant policy using
+the order's item name and checks the verified order's delivery date, return
+window, condition, tags, and final-sale status. It explains the eligibility
+decision and asks whether the customer wants to proceed; this does not submit a
+return or approve a refund.
 
 ## Run locally
 
@@ -50,16 +59,38 @@ FastEmbed downloads and runs the embedding model locally on CPU.
 There is no login screen. Use the **Demo customer** dropdown in Chainlit to choose
 Customer 1, Customer 2, or Customer 3. Changing customers starts a fresh
 conversation and issues a local demo session for the selected account.
+The current read-only **Thread ID** is shown in the Chainlit Chat Settings panel
+and updates when you switch customers or start a conversation with `/new`.
 
 Each account has ten separate demo orders. IDs are `ORD-1101`–`ORD-1110`,
 `ORD-2101`–`ORD-2110`, and `ORD-3101`–`ORD-3110` respectively. The first
 order for each user is eligible for a return after approval; the second is
 final-sale and ineligible. The other orders cover varied delivery and return
-conditions. These fixed credentials are only for local demonstration.
+conditions. If a customer asks about an order without specifying one, ShopSense
+asks for the order ID instead of assuming an order from another conversation.
+These fixed credentials are only for local demonstration.
 
-The LangGraph workflow persists the most recent six conversational turns per
-conversation in a separate SQLite checkpointer. Reuse the response's
-`conversation_id` on follow-up chat requests. The first policy retrieval
+To restore seeded demo orders and clear test approvals/refunds before another
+test, run from the repository root:
+
+```powershell
+python -m app.persistence.reset_demo_data
+```
+
+Confirm the prompt to proceed, or append `--yes` for a non-interactive reset.
+This resets only seeded demo order records and their approval/refund artifacts;
+it leaves auth sessions and conversation checkpoints intact. Unseeded orders
+are not changed.
+
+The LangGraph workflow persists its state after each step in a separate SQLite
+checkpointer. Reuse the response's `conversation_id`, `thread_id`, and
+`session_id` on follow-up chat requests. Thread IDs are random 12-character
+keys. Each response also includes `user_id` and `turn_id`.
+Raw turns are stored before the response completes; longer-term user memory is
+consolidated asynchronously by the LLM every
+`SHOPSENSE_MEMORY_DREAMING_INTERVAL` turns and stored in the ignored local path
+`memories/{user_id}/history_summarization.json`; raw turn records retain all four
+identifiers. The first policy retrieval
 initializes the Qdrant collection and downloads the FastEmbed model; subsequent
 retrievals reuse the local model and indexed chunks. Policy ingestion reads `.txt`,
 `.pdf`, and `.csv` files from `data/policies/`. PDF text is extracted page by page;
@@ -68,6 +99,12 @@ retains the column context. Prose uses paragraph-aware chunks with a 30-word
 overlap. Changed source content triggers a collection re-index. Health is
 available at `GET /health`. Demo orders and policy text are under `data/`; do not
 use them as production policy or customer records.
+
+API processing logs are partitioned into rotating `logs/{thread_id}.log` files.
+Records without an active conversation thread are written to
+`logs/shopsense.log`. Logs include stage timings and completion/failure events.
+Set `SHOPSENSE_LOG_DIRECTORY` to change the log folder. Logs omit customer
+messages, model prompts, and generated response text.
 
 The sample policy handbook PDF contains formatted tables and can be regenerated
 after installing the development extras with:
@@ -83,18 +120,33 @@ Chat:
 ```json
 {
   "conversation_id": "your-conversation-id",
+  "session_id": "your-session-id",
   "message": "Where is order ORD-1101?"
 }
 ```
+
+For streamed answers, send the same JSON to `POST /v1/chat/stream` and read
+Server-Sent Events. Status events report progress while a request is being
+checked or an answer is prepared; validated customer-facing answer text is sent
+as `token` events, followed by `complete`. Each stage is bounded by
+`SHOPSENSE_CHAT_STAGE_TIMEOUT_SECONDS` (60 seconds by default). The regular
+`/v1/chat` endpoint remains available for clients that prefer a single JSON
+response.
+
+Care, order, and refund specialists run directly in-process within the
+checkpointed workflow. This avoids an unnecessary network/protocol hop while
+keeping each specialist's tools and responsibilities separate.
 
 The Chainlit customer dropdown obtains a session from
 `POST /v1/auth/demo-session` with one of the three seeded customer IDs; the
 returned token is attached as `Authorization: Bearer <access_token>` on chat
 requests. The first request can omit `conversation_id`; the response provides one
-to reuse. The API resolves the customer from the session and checks order ownership
-server-side. Sessions expire after 12 hours. This no-login selector is for the
-local demo only and is not real customer authentication. The UI's API address is
-controlled by `SHOPSENSE_API_URL` in `.env`, defaulting to `http://localhost:8000`.
+to reuse. `session_id` can also be omitted; the API derives a stable value from
+the authenticated user and conversation. The API resolves the customer from the
+session and checks order ownership server-side. Sessions expire after 12 hours.
+This no-login selector is for the local demo only and is not real customer
+authentication. The UI's API address is controlled by `SHOPSENSE_API_URL` in
+`.env`, defaulting to `http://localhost:8000`.
 
 The Chainlit **Help topic** selector can route automatically or explicitly select
 order status/delivery, refund/return, or care/policy. Automatic routing remains
@@ -126,9 +178,14 @@ Refund flow:
 
 ## Design and safety notes
 
-- Routing uses inexpensive deterministic rules, avoiding an extra model call for
-  intent and basic sentiment classification. Ambiguous requests are sent to care
-  for clarification.
+- Manual size and injection-string checks run before the model-based input safety
+  gate. The agent workflow retains checkpointed state between every node.
+- An LLM intent agent classifies requests from the current message and recent
+  conversation; intent routing does not use keyword rules. It extracts and
+  validates order IDs against the current message, conversation, and memory.
+  Sentiment uses lightweight deterministic rules. All customer
+  answers—including greetings, missing-information requests, order/refund
+  outcomes, and approval outcomes—are generated by Ollama from verified facts.
 - Order lookup and refund eligibility are deterministic. The refund route cannot
   call the refund operation until a persisted approval is approved.
 - The refund repository uses a transaction and an idempotency key.
@@ -141,12 +198,14 @@ Refund flow:
 - Text, PDF, and CSV policy chunks/records are embedded locally, indexed in
   Qdrant, and cited by source. CSV/PDF table records retain each column name beside
   its value, avoiding embeddings of detached cell text.
-- The latest order ID is retained in the checkpointed conversation state and
-  reused for follow-up order/refund questions that omit it. Greetings receive a
-  local response without invoking a specialist or Qdrant. The chat model receives
-  the current request, up to two recent conversational turns, and a small set of
-  retrieved policy chunks; order/refund agents do not send conversation history
-  to a model.
+- The latest order ID is retained in checkpointed state and user memory, then
+  reused for relevant follow-up order/refund questions that omit it. Each
+  specialist receives recent customer-visible conversation history and the
+  consolidated memory; internal assistant reasoning is excluded from that
+  history. Memory consolidation records the customer's request, the agent's
+  answer, and the order ID with the turn identifiers. Greetings are generated by
+  the care agent without invoking Qdrant. Care answers also receive retrieved
+  policy chunks.
 - Tool access is allowlisted by agent. This demo uses SQLite order data and local
   demo accounts; it is not connected to a production customer authentication
   provider, commerce backend, or payment rail. Do not use the demo credentials or

@@ -1,10 +1,13 @@
 from pathlib import Path
 
+import pytest
+
 from app.retrieval.policies import (
     _ensure_return_policy_passage,
     _chunks,
     _extract_csv_documents,
     _extract_pdf_documents,
+    _table_documents,
 )
 
 
@@ -69,3 +72,84 @@ def test_generic_return_search_uses_canonical_return_policy_source():
     assert passages[0]["source"] == "returns.txt:1"
     assert "original payment method" in passages[0]["text"]
     assert "Final-sale items" in passages[0]["text"]
+
+
+def test_canonical_return_policy_passage_is_selected_when_not_first():
+    passages = _ensure_return_policy_passage(
+        [
+            {"source": "shop_return_and_refund_handbook.pdf:p1", "text": "Unrelated result"},
+            {"source": "returns.txt:2", "text": "Canonical return policy"},
+        ],
+        POLICY_DIRECTORY / "returns.txt",
+        limit=3,
+    )
+
+    assert passages == [{"source": "returns.txt:2", "text": "Canonical return policy"}]
+
+
+def test_chunking_splits_a_single_long_paragraph_with_word_overlap():
+    chunks = _chunks(
+        "one two three four five six seven eight nine",
+        max_words=5,
+        overlap_words=2,
+    )
+
+    assert chunks == [
+        "one two three four five",
+        "four five six seven eight",
+        "seven eight nine",
+    ]
+
+
+def test_chunking_rejects_invalid_size_and_overlap():
+    with pytest.raises(ValueError, match="Chunk size"):
+        _chunks("some policy text", max_words=0)
+    with pytest.raises(ValueError, match="Chunk size"):
+        _chunks("some policy text", max_words=5, overlap_words=5)
+    with pytest.raises(ValueError, match="Chunk size"):
+        _chunks("some policy text", max_words=5, overlap_words=-1)
+
+
+def test_csv_extraction_handles_bom_semicolon_delimiter_and_blank_rows(tmp_path):
+    csv_path = tmp_path / "policy.csv"
+    csv_path.write_text(
+        "\ufeffCategory ; Return window ; Notes\n"
+        " Footwear ; 30 ; Original box required\n"
+        " ; ; \n",
+        encoding="utf-8",
+    )
+
+    documents = _extract_csv_documents(csv_path)
+
+    assert len(documents) == 2
+    assert documents[0][1] == "policy.csv:schema"
+    assert "Columns: Category, Return window, Notes" in documents[0][2]
+    assert documents[1][1] == "policy.csv:row1"
+    assert "Category: Footwear" in documents[1][2]
+    assert "Return window: 30" in documents[1][2]
+
+
+def test_csv_extraction_rejects_a_missing_header_row(tmp_path):
+    csv_path = tmp_path / "empty.csv"
+    csv_path.write_text(" \n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing a header row"):
+        _extract_csv_documents(csv_path)
+
+
+def test_pdf_table_rows_preserve_headers_for_ragged_rows():
+    documents = _table_documents(
+        "policy.pdf",
+        page_number=2,
+        table_number=1,
+        table=[
+            ["Category", None, "Return window"],
+            ["Footwear", "Original box required", "30 days"],
+        ],
+    )
+
+    assert len(documents) == 1
+    assert documents[0][1] == "policy.pdf:p2:table1:row1"
+    assert "Category: Footwear" in documents[0][2]
+    assert "Column 2: Original box required" in documents[0][2]
+    assert "Return window: 30 days" in documents[0][2]

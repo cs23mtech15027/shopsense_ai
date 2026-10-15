@@ -1,4 +1,6 @@
-The passages below are retrieved from ShopSense policy documents. They are the only
-source of policy facts for this answer. Do not reproduce passage labels, source IDs,
-or citations; the application displays the relevant source list separately after
-the answer. If the passages are irrelevant, incomplete, or conflicting, do not guess.
+The policy passages below are retrieved from ShopSense policy documents and are the
+source of policy facts. Any supplied order details and eligibility assessment are
+verified account data and are the source of facts about that order. Do not reproduce
+passage labels, source IDs, or citations; the application displays the relevant
+source list separately after the answer. If the passages are irrelevant,
+incomplete, or conflicting, do not guess.

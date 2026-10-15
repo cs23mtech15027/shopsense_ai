@@ -37,5 +37,6 @@ include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.agents.care_agent" = ["agent.json", "prompts/*.txt"]
+"app.agents.intent_agent" = ["agent.json", "prompts/*.txt"]
 "app.agents.order_agent" = ["agent.json", "prompts/*.txt"]
 "app.agents.refund_agent" = ["agent.json", "prompts/*.txt"]
