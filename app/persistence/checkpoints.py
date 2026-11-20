@@ -1,12 +1,30 @@
 import logging
 import sqlite3
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 from uuid import uuid4
+
+import aiosqlite
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 
 logger = logging.getLogger("shopsense.checkpoints")
 _SIDECAR_SUFFIXES = ("-wal", "-shm")
 _CORRUPTION_ERRORS = ("malformed", "not a database", "disk image")
+
+
+@asynccontextmanager
+async def checkpoint_context(path: str) -> AsyncIterator[AsyncSqliteSaver]:
+    checkpoint_path = Path(path)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    quarantine_corrupt_checkpoint(path)
+    async with aiosqlite.connect(checkpoint_path, timeout=5) as connection:
+        await connection.execute("PRAGMA journal_mode=WAL")
+        await connection.execute("PRAGMA busy_timeout=5000")
+        saver = AsyncSqliteSaver(connection)
+        await saver.setup()
+        yield saver
 
 
 def quarantine_corrupt_checkpoint(path: str) -> Path | None:

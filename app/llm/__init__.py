@@ -1,1 +1,1 @@
-"""Local language model client."""
+"""Cloud language model clients."""

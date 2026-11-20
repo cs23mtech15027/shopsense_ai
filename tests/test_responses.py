@@ -1,5 +1,6 @@
 import pytest
 
+from app.llm.openai_compatible import CloudModelUnavailableError
 from app.llm.responses import compose_customer_answer
 
 
@@ -98,10 +99,31 @@ async def test_customer_answer_uses_constrained_json_retry_after_reasoning(caplo
 
 
 @pytest.mark.asyncio
+async def test_order_status_prompt_requires_available_delivery_date():
+    llm = ScriptedLLM(
+        [],
+        json_answers=[{"answer": "Your order was delivered on 2026-11-20."}],
+    )
+
+    answer = await compose_customer_answer(
+        llm,
+        "What is the status of ORD-1101?",
+        {
+            "order_id": "ORD-1101",
+            "status": "delivered",
+            "delivery_date": "2026-11-20",
+        },
+    )
+
+    assert answer == "Your order was delivered on 2026-11-20."
+    assert "explicitly include that date" in llm.json_prompts[0][0]
+
+
+@pytest.mark.asyncio
 async def test_customer_answer_recovers_when_json_generation_is_invalid():
     llm = ScriptedLLM(
         ["Hello! How can I help you today?"],
-        json_answers=[RuntimeError("Local language model returned invalid JSON.")],
+        json_answers=[RuntimeError("Cloud language model returned invalid JSON.")],
     )
 
     answer = await compose_customer_answer(
@@ -113,6 +135,23 @@ async def test_customer_answer_recovers_when_json_generation_is_invalid():
     assert answer == "Hello! How can I help you today?"
     assert len(llm.json_prompts) == 1
     assert len(llm.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_customer_answer_does_not_make_plain_retry_when_provider_is_unavailable():
+    llm = ScriptedLLM(
+        ["This should not be requested."],
+        json_answers=[CloudModelUnavailableError("rate limited")],
+    )
+
+    with pytest.raises(CloudModelUnavailableError, match="rate limited"):
+        await compose_customer_answer(
+            llm,
+            "hello",
+            {"interaction": "greeting"},
+        )
+
+    assert len(llm.prompts) == 0
 
 
 @pytest.mark.asyncio

@@ -33,7 +33,9 @@ class Database:
                     customer_id TEXT PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE,
                     password_salt TEXT NOT NULL,
-                    password_hash TEXT NOT NULL
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'customer',
+                    is_demo INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS auth_sessions (
                     token_hash TEXT PRIMARY KEY,
@@ -57,7 +59,9 @@ class Database:
                     return_received INTEGER NOT NULL DEFAULT 0,
                     inspection_passed INTEGER NOT NULL DEFAULT 0,
                     refund_initiated INTEGER NOT NULL DEFAULT 0,
-                    refund_initiated_date TEXT
+                    refund_initiated_date TEXT,
+                    open_box_delivery INTEGER NOT NULL DEFAULT 0,
+                    otp_verified INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS approvals (
                     approval_id TEXT PRIMARY KEY,
@@ -74,11 +78,29 @@ class Database:
                     currency TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS return_requests (
+                    request_id TEXT PRIMARY KEY,
+                    order_id TEXT NOT NULL UNIQUE REFERENCES orders(order_id),
+                    customer_id TEXT NOT NULL REFERENCES customers(customer_id),
+                    status TEXT NOT NULL CHECK(status IN ('requested', 'cancelled')),
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
             from app.persistence.users import seed_demo_customers
 
             seed_demo_customers(connection)
+            customer_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(customers)")
+            }
+            if "role" not in customer_columns:
+                connection.execute(
+                    "ALTER TABLE customers ADD COLUMN role TEXT NOT NULL DEFAULT 'customer'"
+                )
+            if "is_demo" not in customer_columns:
+                connection.execute(
+                    "ALTER TABLE customers ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0"
+                )
             existing_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(orders)")
             }
@@ -91,6 +113,8 @@ class Database:
                 "refund_initiated",
                 "refund_initiated_date",
                 "estimated_delivery_at",
+                "open_box_delivery",
+                "otp_verified",
             ):
                 if column not in existing_columns:
                     if column in {"refund_initiated_date", "estimated_delivery_at"}:
@@ -133,7 +157,7 @@ class Database:
                  refund_initiated, refund_initiated_date)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                [*_demo_orders(), *_multi_customer_orders()],
+                _multi_customer_orders(),
             )
             connection.execute(
                 """
@@ -144,31 +168,51 @@ class Database:
                 """
             )
             connection.execute(
-                "UPDATE orders SET customer_id = 'customer-1002' WHERE order_id = 'ORD-1002'"
+                """
+                UPDATE orders
+                SET amount_minor = 75000
+                WHERE order_id = 'ORD-1101' AND customer_id = 'customer-1'
+                """
             )
             connection.execute(
                 """
                 UPDATE orders
-                SET item_name = 'Linen trousers (legacy sample)'
-                WHERE order_id = 'ORD-2001' AND customer_id = 'customer-2001'
+                SET open_box_delivery = 1, otp_verified = 1
+                WHERE order_id = 'ORD-1110' AND customer_id = 'customer-1'
                 """
+            )
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO orders
+                (order_id, customer_id, item_name, status, delivered_at,
+                 return_window_days, amount_minor, currency, item_unused,
+                 tags_attached, final_sale, return_received, inspection_passed)
+                VALUES (?, ?, ?, 'delivered', date('now', '-4 days'), 30,
+                        99900, 'INR', 1, 1, 0, 1, 1)
+                """,
+                [
+                    ("ORD-1111", "customer-1", "Cotton innerwear set"),
+                    ("ORD-1112", "customer-1", "Open-box appliance"),
+                ],
             )
             connection.execute(
                 """
-                INSERT OR IGNORE INTO refunds
-                (idempotency_key, order_id, amount_minor, currency)
-                SELECT 'demo-refund:ORD-1006', order_id, amount_minor, currency
-                FROM orders
-                WHERE order_id = 'ORD-1006' AND refund_initiated = 1
+                UPDATE orders
+                SET open_box_delivery = 1, otp_verified = 1
+                WHERE order_id = 'ORD-1112' AND customer_id = 'customer-1'
                 """
             )
 
     def reset_demo_orders(self) -> int:
         self.initialize()
-        seeded_orders = [*_demo_orders(), *_multi_customer_orders()]
+        seeded_orders = _multi_customer_orders()
         order_ids = [order[0] for order in seeded_orders]
         placeholders = ", ".join("?" for _ in order_ids)
         with self.connect() as connection:
+            connection.execute(
+                f"DELETE FROM return_requests WHERE order_id IN ({placeholders})",
+                order_ids,
+            )
             connection.execute(
                 f"DELETE FROM approvals WHERE order_id IN ({placeholders})",
                 order_ids,
@@ -240,15 +284,6 @@ class Database:
                         order_id,
                     ),
                 )
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO refunds
-                (idempotency_key, order_id, amount_minor, currency)
-                SELECT 'demo-refund:ORD-1006', order_id, amount_minor, currency
-                FROM orders
-                WHERE order_id = 'ORD-1006' AND refund_initiated = 1
-                """
-            )
         return len(seeded_orders)
 
 
@@ -477,7 +512,9 @@ def _multi_customer_orders() -> list[tuple]:
         "Pleated skirt",
     )
     orders: list[tuple] = []
-    for customer_number, first_order_number in ((1, 1101), (2, 2101), (3, 3101)):
+    for customer_number, first_order_number in (
+        (number, number * 1000 + 101) for number in range(1, 6)
+    ):
         for order_index, item_name in enumerate(catalog):
             status = "delivered"
             delivered_at = (today - timedelta(days=5)).isoformat()
@@ -527,4 +564,23 @@ def _multi_customer_orders() -> list[tuple]:
                     initiated_at,
                 )
             )
+    orders.append(
+        (
+            "ORD-1113",
+            "customer-1",
+            "High-value leather jacket (Customer 1)",
+            "delivered",
+            (today - timedelta(days=5)).isoformat(),
+            30,
+            750000,
+            "INR",
+            1,
+            1,
+            0,
+            1,
+            1,
+            0,
+            None,
+        )
+    )
     return orders

@@ -8,9 +8,10 @@ import time
 import uuid
 from pathlib import Path
 
-from fastembed import TextEmbedding
 import pdfplumber
 from qdrant_client import QdrantClient, models
+
+from app.config import EMBEDDING_DIMENSION, EMBEDDING_MODEL
 
 logger = logging.getLogger("shopsense.retrieval.policies")
 _RETURN_POLICY_QUERY = re.compile(r"\b(return|refund|refudn|refun|exchange)\b", re.IGNORECASE)
@@ -22,26 +23,38 @@ class PolicyStore:
         self,
         qdrant_url: str,
         collection_name: str,
-        embedding_model: str,
         policy_directory: Path,
+        api_key: str,
+        embedding_model: str = EMBEDDING_MODEL,
     ):
-        self.client = QdrantClient(url=qdrant_url, timeout=10)
+        self.client = QdrantClient(
+            url=qdrant_url,
+            api_key=api_key,
+            timeout=10,
+            cloud_inference=True,
+        )
         self.collection_name = collection_name
         self.embedding_model = embedding_model
-        self.embedding = TextEmbedding(model_name=embedding_model)
         self.policy_directory = policy_directory
         self._initialized = False
         self._initialization_lock = threading.Lock()
+        self._document_count = 0
+
+    def ingest(self) -> int:
+        self._ensure_index()
+        return self._document_count
 
     def search(self, query: str, limit: int) -> list[dict[str, str]]:
         started = time.perf_counter()
         logger.info("Policy retrieval started limit=%d", limit)
-        self._ensure_index()
+        self._validate_collection()
         normalized_query = _REFUND_TYPO.sub("refund", query)
-        vector = list(self.embedding.query_embed(normalized_query))[0].tolist()
         result = self.client.query_points(
             collection_name=self.collection_name,
-            query=vector,
+            query=models.Document(
+                text=normalized_query,
+                model=self.embedding_model,
+            ),
             limit=limit,
             with_payload=True,
         )
@@ -54,11 +67,12 @@ class PolicyStore:
             if point.payload and "text" in point.payload and "source" in point.payload
         ]
         if _RETURN_POLICY_QUERY.search(query):
-            passages = _ensure_return_policy_passage(
-                passages,
-                self.policy_directory / "returns.txt",
-                limit,
+            canonical_passage = next(
+                (item for item in passages if item["source"].startswith("returns.txt:")),
+                None,
             )
+            if canonical_passage is not None:
+                passages = [canonical_passage]
         logger.info(
             "Policy retrieval completed passages=%d elapsed_ms=%.0f",
             len(passages),
@@ -73,25 +87,74 @@ class PolicyStore:
             if self._initialized:
                 return
             started = time.perf_counter()
-            logger.info("Policy index initialization started")
+            logger.info(
+                "Policy index initialization started collection=%s",
+                self.collection_name,
+            )
             documents = self._load_documents()
             expected_ids = {self._point_id(document) for document in documents}
-            if self.client.collection_exists(self.collection_name):
-                indexed_ids = self._indexed_ids()
-                if indexed_ids != expected_ids:
-                    self.client.delete_collection(self.collection_name)
-            if not self.client.collection_exists(self.collection_name):
+            exists = self.client.collection_exists(self.collection_name)
+            indexed_ids = self._indexed_ids() if exists else set()
+            if not exists:
                 self.client.create_collection(
                     collection_name=self.collection_name,
-                    vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+                    vectors_config=models.VectorParams(
+                        size=EMBEDDING_DIMENSION,
+                        distance=models.Distance.COSINE,
+                    ),
                 )
-            if expected_ids:
+            else:
+                collection = self.client.get_collection(self.collection_name)
+                configured_vectors = collection.config.params.vectors
+                if not isinstance(configured_vectors, models.VectorParams):
+                    raise RuntimeError(
+                        "Policy collection must use one unnamed dense vector."
+                    )
+                if configured_vectors.size != EMBEDDING_DIMENSION:
+                    raise RuntimeError(
+                        f"Cloud embedding model {self.embedding_model!r} produces "
+                        f"{EMBEDDING_DIMENSION}-dimensional vectors, but collection "
+                        f"{self.collection_name!r} expects {configured_vectors.size}. "
+                        "Select a new collection with the required dimensions."
+                    )
+                stale_ids = indexed_ids - expected_ids
+                if stale_ids:
+                    self.client.delete(
+                        collection_name=self.collection_name,
+                        points_selector=models.PointIdsList(points=sorted(stale_ids)),
+                        wait=True,
+                    )
+            if expected_ids - indexed_ids:
                 self._index_documents(documents)
+            self._document_count = len(documents)
             self._initialized = True
             logger.info(
                 "Policy index initialization completed documents=%d elapsed_ms=%.0f",
                 len(documents),
                 (time.perf_counter() - started) * 1000,
+            )
+
+    def _validate_collection(self) -> None:
+        if not self.client.collection_exists(self.collection_name):
+            raise RuntimeError(
+                f"Qdrant collection {self.collection_name!r} does not exist. "
+                "Run python scripts/ingest_policies.py first."
+            )
+        collection = self.client.get_collection(self.collection_name)
+        configured_vectors = collection.config.params.vectors
+        if not isinstance(configured_vectors, models.VectorParams):
+            raise RuntimeError("Policy collection must use one unnamed dense vector.")
+        if configured_vectors.size != EMBEDDING_DIMENSION:
+            raise RuntimeError(
+                f"Cloud embedding model {self.embedding_model!r} produces "
+                f"{EMBEDDING_DIMENSION}-dimensional vectors, but collection "
+                f"{self.collection_name!r} expects {configured_vectors.size}. "
+                "Select a new collection with the required dimensions."
+            )
+        if collection.points_count == 0:
+            raise RuntimeError(
+                f"Qdrant collection {self.collection_name!r} is empty. "
+                "Run python scripts/ingest_policies.py first."
             )
 
     def _load_documents(self) -> list[tuple[str, str, str]]:
@@ -117,14 +180,16 @@ class PolicyStore:
         return documents
 
     def _index_documents(self, documents: list[tuple[str, str, str]]) -> None:
-        vectors = list(self.embedding.passage_embed([document[2] for document in documents]))
         points = [
             models.PointStruct(
                 id=self._point_id(document),
-                vector=vector.tolist(),
+                vector=models.Document(
+                    text=document[2],
+                    model=self.embedding_model,
+                ),
                 payload={"source": document[1], "text": document[2]},
             )
-            for document, vector in zip(documents, vectors, strict=True)
+            for document in documents
         ]
         self.client.upsert(collection_name=self.collection_name, points=points, wait=True)
 
@@ -189,23 +254,6 @@ def _extract_csv_documents(path: Path) -> list[tuple[str, str, str]]:
                 )
             )
     return documents
-
-
-def _ensure_return_policy_passage(
-    passages: list[dict[str, str]],
-    policy_path: Path,
-    limit: int,
-) -> list[dict[str, str]]:
-    canonical_passage = next(
-        (item for item in passages if item["source"].startswith("returns.txt:")),
-        None,
-    )
-    if canonical_passage is not None:
-        return [canonical_passage]
-    chunks = _chunks(policy_path.read_text(encoding="utf-8"))
-    if not chunks:
-        return passages[:limit]
-    return [{"source": "returns.txt:1", "text": chunks[0]}]
 
 
 def _extract_pdf_documents(path: Path) -> list[tuple[str, str, str]]:

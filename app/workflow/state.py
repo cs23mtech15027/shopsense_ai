@@ -15,11 +15,21 @@ class SupportState(TypedDict, total=False):
     active_order_id: str
     use_active_order: bool
     return_eligibility_requested: bool
+    pending_action: dict | None
+    confirmation_accepted: bool
+    confirmation_rejected: bool
     is_greeting: bool
     message: str
     intent: str
+    active_agent: str
     sentiment: str
     answer: str
     status: str
     approval_id: str | None
     sources: list[str]
+    guardrail_facts: dict | None
+
+
+class SupportContext(TypedDict):
+    user_jwt: str
+    trace_id: str

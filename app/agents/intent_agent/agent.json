@@ -1,7 +1,7 @@
 {
   "name": "intent_agent",
   "description": "Classifies customer requests and selects relevant order context.",
-  "model": "configured-local-chat-model",
+  "model": "configured-groq-chat-model",
   "allowed_tools": ["build_context", "validate_decision"],
   "prompts": {
     "instructions": "prompts/01_instructions.txt",

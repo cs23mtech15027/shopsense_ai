@@ -1,0 +1,11 @@
+Peak Sale Delivery Delays
+
+During a peak sale, order processing and carrier scans may take longer than usual.
+Customers should be given only the latest estimate shown in the verified order
+record. A peak-sale delay does not create a guaranteed delivery date, automatic
+shipping compensation, or an exception to the return policy.
+
+If an order is delayed, verify its current status and estimated delivery date before
+replying. If the estimate has passed or tracking has not updated, apologize and
+escalate the delivery inquiry for a fulfillment review. Do not invent a carrier,
+tracking event, delivery date, or compensation.

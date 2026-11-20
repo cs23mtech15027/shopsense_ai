@@ -3,14 +3,13 @@ from pathlib import Path
 
 from app.agents.intent_agent.callback import on_agent_complete
 from app.agents.intent_agent.tools.intent_tool import IntentTool
-from app.llm.ollama import OllamaClient
 
 
 _AGENT_DIRECTORY = Path(__file__).parent
 
 
 class IntentDetectionAgent:
-    def __init__(self, llm: OllamaClient):
+    def __init__(self, llm):
         self.llm = llm
         self.intent_tool = IntentTool()
         configuration = json.loads(

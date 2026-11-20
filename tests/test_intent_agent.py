@@ -91,6 +91,56 @@ async def test_intent_agent_selects_the_only_active_order_for_return_followup():
     assert result["return_eligibility_requested"] is True
 
 
+def test_return_policy_about_current_product_routes_to_care_and_checks_order():
+    tool = IntentTool()
+    context = tool.build_context(
+        {
+            "message": "What is the return policy on this product?",
+            "conversation": [
+                {"role": "user", "content": "What is the status of ORD-1101?"},
+                {"role": "assistant", "content": "It was delivered."},
+            ],
+        }
+    )
+
+    result = tool.validate_decision(
+        {
+            "intent": "refund",
+            "order_id": "",
+            "is_greeting": False,
+            "return_eligibility_requested": False,
+        },
+        context,
+    )
+
+    assert result == {
+        "intent": "care",
+        "order_id": "ORD-1101",
+        "is_greeting": False,
+        "return_eligibility_requested": True,
+    }
+
+
+def test_general_return_policy_question_does_not_route_to_refund():
+    tool = IntentTool()
+    context = tool.build_context(
+        {"message": "What is the return policy?", "conversation": []}
+    )
+
+    result = tool.validate_decision(
+        {
+            "intent": "refund",
+            "order_id": "",
+            "is_greeting": False,
+            "return_eligibility_requested": False,
+        },
+        context,
+    )
+
+    assert result["intent"] == "care"
+    assert result["return_eligibility_requested"] is False
+
+
 def test_intent_tool_builds_context_and_validates_result():
     tool = IntentTool()
     context = tool.build_context(

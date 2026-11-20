@@ -1,11 +1,12 @@
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 .pytest_cache/
 *.py[cod]
-data/*.db
-data/models/
+data/*.db*
+*.db*
+*.log
 memories/
 logs/
-chainlit.md
-.chainlit/

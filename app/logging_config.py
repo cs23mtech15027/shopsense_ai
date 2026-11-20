@@ -8,6 +8,7 @@ from typing import Iterator
 
 
 _thread_id: ContextVar[str] = ContextVar("shopsense_thread_id", default="-")
+_trace_id: ContextVar[str] = ContextVar("shopsense_trace_id", default="-")
 _FILE_HANDLER_MARKER = "_shopsense_file_handler"
 _THREAD_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{12}$")
 
@@ -15,6 +16,7 @@ _THREAD_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{12}$")
 class _ThreadIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.thread_id = _thread_id.get()
+        record.trace_id = _trace_id.get()
         return True
 
 
@@ -57,7 +59,16 @@ def bind_thread_id(thread_id: str) -> Iterator[None]:
         _thread_id.reset(token)
 
 
-def configure_file_logging(directory: str | Path) -> None:
+@contextmanager
+def bind_trace_id(trace_id: str) -> Iterator[None]:
+    token: Token[str] = _trace_id.set(trace_id)
+    try:
+        yield
+    finally:
+        _trace_id.reset(token)
+
+
+def configure_file_logging(directory: str | Path, level: str = "INFO") -> None:
     log_directory = Path(directory).resolve()
     logger = logging.getLogger("shopsense")
     for handler in tuple(logger.handlers):
@@ -72,10 +83,11 @@ def configure_file_logging(directory: str | Path) -> None:
     handler = _ThreadPartitionedRotatingFileHandler(log_directory)
     handler.setFormatter(
         logging.Formatter(
-            "%(asctime)s %(levelname)s %(name)s thread_id=%(thread_id)s %(message)s"
+            "%(asctime)s %(levelname)s %(name)s thread_id=%(thread_id)s "
+            "trace_id=%(trace_id)s %(message)s"
         )
     )
     handler.addFilter(_ThreadIdFilter())
     setattr(handler, _FILE_HANDLER_MARKER, True)
     logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(getattr(logging, level.upper(), logging.INFO))

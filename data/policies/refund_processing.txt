@@ -5,10 +5,12 @@ request. The retailer verifies the order, applicable category policy, delivery d
 condition, tags, final-sale status, receipt of the returned item, and inspection
 result. Submitting a request does not mean it is approved.
 
-After the returned item is received and inspection passes, an authorized support
-employee may approve initiation of the refund. The refund initiation record must
-include the order number, approved amount, currency, approval timestamp, and an
-idempotency key. Repeated approvals must not create duplicate refund operations.
+After the returned item is received and inspection passes, an eligible refund in
+INR of 5,000 or less may be initiated automatically after the customer confirms the
+exact order number. Refunds above INR 5,000, and refunds in another currency, must
+be escalated for Tier-2 supervisor approval. The refund initiation record must
+include the order number, amount, currency, timestamp, and an idempotency key.
+Repeated requests must not create duplicate refund operations.
 
 Refund initiation means that the approved refund instruction has been handed to the
 payment workflow. It does not prove that funds have settled to the customer's
@@ -16,6 +18,7 @@ account. Support must distinguish requested, pending approval, initiated, and
 settled states. A settlement date must only be shown when confirmed by the payment
 provider.
 
-The prototype records a demo refund initiation in its local database. It is not
-connected to a payment processor, does not move money, and must not be described as
-a completed or settled refund.
+The prototype records a demo refund initiation in the local OMS database. It is
+not connected to a payment processor, does not move money, and must not be
+described as a completed or settled refund. A request awaiting Tier-2 approval has
+not been initiated.
