@@ -2,88 +2,83 @@
 
 **Course:** CS5903: Distributed AI Training  
 **Project:** ShopSense Multi-Agent E-Commerce Customer Care Assistant  
+**Student:** Yashkumar Joshi (`CS23MTECH15027`)  
 **Repository:** https://github.com/cs23mtech15027/shopsense_ai  
 **Documentation Date:** 21 November 2026
 
 ---
 
-## ADR-001 — Initial Methodology Selection: Local-Only Multi-Agent Stack (9 October 2026 Baseline)
+## ADR-001 — Initial Local-Only Multi-Agent Architecture (9 October 2026 Baseline)
 
-* **Date, status & scope:** Decision date: 9 October 2026 (documented 21 November 2026) | **Status:** Superseded by ADR-002 | **Scope:** Full runtime stack (LLM inference, Policy RAG, OMS backend, UI, memory)
-* **Context & decision drivers:** By the 9 October 2026, 11:59 PM IST methodology checkpoint, the project needed a self-contained, zero-cost, reproducible multi-agent customer support prototype for high-volume e-commerce operations (order tracking, policy Q&A, and deterministic return/refund eligibility). Key constraints included zero external API billing risk, offline reproducibility on a student laptop, and strict deterministic enforcement of refund rules.
-* **Options considered:**
-  1. **Local-only stack (Ollama Qwen 4B + local `BAAI/bge-small-en-v1.5` + local Qdrant + FastAPI/Chainlit + JSON summary memory):** Zero external API cost and full local control, but constrained by local RAM/disk (~5 GB RAM needed for Qwen 4B plus ~133 MB embedding weights) and slow CPU/single-node inference.
-  2. **Fully cloud-hosted stack (Managed LLM + Cloud Vector DB + Hosted backend/MCP):** Lower inference latency and stronger models, but higher configuration complexity, external credential handling, and cloud deployment overhead for early milestone bring-up.
-* **Decision & rationale:** Selected the **local-only stack** on 9 October 2026 to validate the core LangGraph multi-agent architecture (input guardrail -> triage -> care/order/refund specialists -> output guardrail) and deterministic SQLite OMS rules without external service dependencies.
-* **Consequences & trade-offs:**
-  * *Benefits:* Verified end-to-end LangGraph routing, multi-format policy ingestion (`.txt`, `.csv`, `.pdf`), and deterministic refund checks locally.
-  * *Costs & risks:* Severe inference latency (~30 seconds per request locally), tight local disk/RAM ceiling that locked the system to a 4B-parameter model (Qwen 4B), and weaker greeting/triage consistency on nuanced queries.
-* **Evidence & validation:** Initial prototype architecture (Report Fig. 2 & Table 1), local SQLite OMS schema, and baseline golden-dataset runs. Link: `[INSERT_COMMIT_OR_PR_LINK]`.
-* **Revisit trigger:** End-to-end per-turn latency persistently exceeding 20 seconds or local hardware memory/disk constraints blocking upgrade to a stronger tool-capable LLM.
+### Date, status & scope
+* **Decision Date:** 9 October 2026 *(documented 21 November 2026)*
+* **Status:** Superseded by `ADR-002`
+* **Scope:** Complete initial runtime stack — local LLM inference, local Policy RAG embeddings/vector DB, FastAPI + Chainlit UI, local JSON memory consolidation, and SQLite OMS.
 
----
+### Context & decision drivers
+By the 9 October 2026 methodology checkpoint, ShopSense required a self-contained, zero-cost prototype to validate stateful multi-agent e-commerce customer support (order tracking, multi-format policy Q&A, and deterministic return/refund eligibility). Key drivers were avoiding external API billing during early bring-up, proving deterministic policy/refund enforcement in Python/SQLite (mitigating chatbot policy-hallucination liability), and running offline on a local system.
 
-## ADR-002 — Post-Checkpoint Methodology Pivot: Hybrid Cloud-Local Architecture (Mandatory Methodology Change Record)
+### Options considered
+1. **Local-Only Stack (Selected on 9 October 2026):** Local Ollama (`Qwen 4B`), local `BAAI/bge-small-en-v1.5` embeddings (~133 MB), local Qdrant, FastAPI + Chainlit UI, local JSON history summarization, and direct SQLite OMS queries with static `X-Approval-Token` approval endpoints.
+2. **Cloud-First Stack from Day 1:** Hosted LLM inference, cloud vector DB, and remote backend services. Offered lower latency and stronger models, but added early credential management, quota setup, and deployment complexity before the core LangGraph workflow was verified.
 
-* **Date, status & scope:** Documentation date: 21 November 2026 *(revises the 9 October 2026 local selection; mentor approval record: `[INSERT_MENTOR_APPROVAL_DATE_OR_EMAIL_LINK]`)* | **Status:** Accepted | **Supersedes:** ADR-001 | **Scope:** Inference layer, Policy RAG embeddings/vector DB, UI, MCP tool boundary, memory, and observability.
-* **Context & decision drivers:**
-  * **Old approach (as of 9 October 2026):** Same LangGraph multi-agent design, but all services ran locally (Ollama Qwen 4B, local `BAAI/bge-small-en-v1.5` ~133 MB weights, local Qdrant, Chainlit UI, local JSON memory consolidation).
-  * **New evidence:** Local testing exposed two critical bottlenecks: (1) average response latency reached **~30 seconds per request**, making interactive support demos and 30-query golden-dataset sweeps impractical; (2) limited local RAM and disk space prevented upgrading beyond Qwen 4B, causing weaker greeting classification and policy synthesis.
-* **Options considered:**
-  1. **Keep local-only stack (ADR-001):** Preserves zero external dependencies, but remains stuck at ~30 s/request latency and 4B-parameter model quality.
-  2. **Fully cloud-deployed stack (including remote Hugging Face Space MCP server):** Eliminates all local processes, but introduces private-Space Hugging Face token vs. user JWT `Authorization` header collisions, cold starts, and harder local grading setup.
-  3. **Hybrid Cloud-Local stack (Selected):** Keep the exact same multi-agent architecture, run compute-heavy/stateless services in free-tier cloud (**Groq API** with `openai/gpt-oss-120b`, **Qdrant Cloud Inference** with `sentence-transformers/all-minilm-l6-v2`, optional **Supermemory**, optional **Langfuse EU**), and run the operational **Streamlit UI**, **loopback Streamable HTTP MCP server**, **SQLite OMS**, and **SQLite LangGraph checkpointer** locally.
-* **Decision & rationale:** Selected **Option 3 (Hybrid Architecture)**. Moving LLM inference to Groq's open-weight `openai/gpt-oss-120b` (Apache 2.0) and moving policy embeddings to Qdrant Cloud Inference (`cloud_inference=True`) eliminated local model disk/RAM bottlenecks while preserving the exact same agent graph and deterministic OMS rules. Keeping the MCP server on `127.0.0.1` avoided cloud token friction while maintaining production-style JWT-authenticated protocol separation.
-* **Consequences & trade-offs:**
-  * *Benefits:* Latency dropped from **~30 s/request** (local Qwen 4B) to **p90 = 15 s** measured across **108 Langfuse traces**; greeting handling and golden-dataset response quality improved substantially; zero local GPU or embedding model download required.
-  * *Trade-offs:* Introduces external API dependencies, Groq free-tier rate limits (requiring retry logic), and external network hops. Moving from `BAAI/bge-small-en-v1.5` (512-token window) to Qdrant Cloud's free server-side `sentence-transformers/all-minilm-l6-v2` (256-token window) trades some standalone dense retrieval ceiling for zero local footprint—mitigated by 180-word chunking.
-  * *Impact on milestones & tests:* Frozen acceptance criteria (order ownership isolation, deterministic refund eligibility, confirmation before mutation, prompt-injection blocking, 30-query golden dataset) remained intact; `tests/` expanded to 63 automated tests covering cloud retries, Qdrant Cloud Inference, MCP JWT auth, and redacted observability.
-* **Evidence & validation:**
-  * 108 Langfuse EU traces confirming **p90 latency = 15 s** (Report Fig. 9).
-  * 30-query golden dataset (`data/golden_dataset/golden_test_results.csv`): Policy RAG Mean Recall@3 = `0.7391`, Mean Precision@3 = `0.2899`.
-  * Automated test suite (`pytest`): 62/63 passing (1 Langfuse env-toggle test tracked for fix prior to final tag). Link: `[INSERT_COMMIT_OR_PR_LINK]`.
-* **Revisit trigger:** Groq free-tier rate limits or latency regularly exceeding SLA (>20 s p90), or policy retrieval Recall@3 remaining below 0.80 on Returns & Refunds queries (triggering hybrid BM25 + dense retrieval in Qdrant).
+### Decision & rationale
+Selected **Option 1 (Local-Only Stack)** on 9 October 2026 to establish a working, offline-reproducible baseline for the LangGraph triage-and-specialist architecture (`Care`, `Order`, `Refund`) and verify multi-format `.txt`/`.csv`/`.pdf` ingestion and SQLite eligibility rules with zero external dependencies.
+
+### Consequences & trade-offs
+* **Benefits:** Proved end-to-end LangGraph routing, table-aware PDF/CSV policy extraction, and deterministic refund eligibility checks without API costs.
+* **Costs & limitations:** High end-to-end latency (**~25–30 seconds per request** on local hardware); tight local RAM/disk limits (≥5 GB RAM needed for `Qwen 4B` plus ~133 MB for local embeddings) blocked upgrading to a stronger tool-capable LLM; `Qwen 4B` produced weaker greeting and nuanced triage quality; manual LLM summarization into local JSON files added extra latency and created lossy static snapshots.
+
+### Evidence & validation
+* Baseline architecture and component breakdown documented in `docs/Project_Report.pdf` (Section 2 & Baseline Table).
+* Early prototype code history and baseline SQLite OMS schema (`customers`, `auth_sessions`, `orders`, `approvals`, `refunds`). Commit/PR reference: `06375bdbcf312fbae4ddabd034aba53e52047988`.
+
+### Revisit trigger
+Observed per-request latency persistently exceeding 30 seconds, or local RAM/disk constraints preventing upgrade beyond a 4B-parameter model for reliable triage and tool use.
 
 ---
 
-## ADR-003 — Security & Tool Boundary: Loopback Streamable HTTP MCP with Per-Request JWT
+## ADR-002 — Transition to Hybrid Cloud-Local Multi-Agent Architecture
 
-* **Date, status & scope:** Documentation date: 21 November 2026 | **Status:** Accepted | **Scope:** `app/mcp_server.py`, `app/auth_context.py`, `app/persistence/orders.py`, `ui.py`
-* **Context & decision drivers:** Order lookups, cancellations, and refund initiations mutate customer account state. Allowing an LLM to supply an arbitrary `user_id` creates an Insecure Direct Object Reference (IDOR) vulnerability where one shopper could view or refund another shopper's orders via prompt injection.
-* **Options considered:**
-  1. **Direct SQLite calls from agent tools using LLM-supplied `user_id`:** Simplest code, but vulnerable to prompt-injected cross-account access.
-  2. **Remote cloud-hosted MCP server on Hugging Face Spaces:** Publicly addressable, but requires managing Space auth tokens alongside shopper JWTs and adds cold-start delays.
-  3. **Local loopback Streamable HTTP MCP server (`127.0.0.1`) with mandatory Bearer JWT verification (Selected):** Enforces protocol separation and per-request identity verification without remote hosting friction.
-* **Decision & rationale:** Selected **Option 3**. Every MCP tool call requires a signed shopper JWT in `Authorization: Bearer <token>`, passed via runtime context (never stored in LangGraph checkpoints or Supermemory). The MCP server verifies signature, issuer, audience, expiry, and token ID, extracts `sub` (`user_id`), and enforces owner-scoped SQLite queries (`WHERE user_id = ?`) plus deterministic refund/Tier-2 rules in code.
-* **Consequences & trade-offs:** Prevents LLM-driven IDOR and enforces strict ₹5,000 Tier-2 escalation and non-returnable hygiene rules deterministically. Loopback binding (`127.0.0.1`) limits this prototype to single-host demo execution until deployed behind TLS and an enterprise identity provider.
-* **Evidence & validation:** 13 passing integration tests in `tests/` covering loopback/JWT validation, shopper ownership isolation, idempotency, and refund rules. Link: `[INSERT_COMMIT_OR_PR_LINK]`.
-* **Revisit trigger:** Deployment beyond local demo to multi-user cloud hosting (requires TLS termination, asymmetric JWKS verification, and external OAuth/OIDC).
+### Date, status & scope
+* **Decision Date:** Post-9 October 2026 pivot *(documented 21 November 2026; mentor approval record: Animesh Singh)*
+* **Status:** Accepted
+* **Supersedes:** `ADR-001`
+* **Scope:** Full hybrid architecture consolidation — cloud LLM inference (Groq), cloud Policy RAG embeddings (Qdrant Cloud Inference), loopback Streamable HTTP MCP server with per-request JWT auth, persistence split (local SQLite checkpoints + optional Supermemory), Streamlit UI, and optional redacted Langfuse EU observability.
 
----
+### Context & decision drivers
+Live evaluation of the `ADR-001` local baseline triggered both revisit conditions:
+1. **Latency bottleneck:** Local inference on a student Windows laptop (Intel Core i3, 4 GB RAM) averaged **~25–30 seconds per request**, making interactive demos and 30-query golden-dataset sweeps impractical.
+2. **Hardware ceiling:** Limited local RAM and disk space locked inference to `Qwen 4B` and required local embedding model downloads (~133 MB), limiting greeting/triage accuracy and evaluator reproducibility.
+3. **Security, state & operational gaps:** Direct SQLite calls and static approval tokens lacked per-user JWT isolation (IDOR protection), local JSON summarization burned extra LLM calls and created stale files, and Chainlit lacked simple side-by-side operational controls (JWT login, thread switching, citations, trace IDs).
 
-## ADR-004 — Persistence Split: Local SQLite Checkpoints vs. Optional Supermemory
+### Options considered
+1. **Keep Local-Only Baseline (`ADR-001`):** Preserves offline execution, but remains stuck at ~25–30 s/request latency and 4B-parameter model limits.
+2. **Hybrid Cloud-Local Architecture (Selected):** Preserves the exact same LangGraph multi-agent architecture while moving compute-heavy stateless inference and vector search to free-tier cloud services and keeping the UI, JWT-protected MCP tool boundary, SQLite OMS, and thread checkpoints local.
 
-* **Date, status & scope:** Documentation date: 21 November 2026 | **Status:** Accepted | **Scope:** `app/persistence/checkpoints.py`, `app/persistence/supermemory.py`, `app/persistence/memory.py`
-* **Context & decision drivers:** The initial design ran manual LLM summarization to local JSON files (`memories/customer-*/history_summarization.json`), consuming extra LLM tokens/latency and producing lossy static snapshots. Additionally, combining within-thread graph execution state with cross-thread shopper memory risked leaking an old active `order_id` into a new conversation.
-* **Options considered:**
-  1. **Keep local JSON history consolidation:** No external dependency, but eats Groq free-tier TPM/RPD quota and accumulates stale local files.
-  2. **Store LangGraph checkpoints inside Supermemory or MCP:** Misaligned with LangGraph's transactional `BaseCheckpointSaver` interface and adds HTTP overhead to every graph super-step.
-  3. **Local SQLite LangGraph checkpoints + optional shopper-scoped Supermemory (Selected):** Cleanly separates active thread execution state from cross-session preferences.
-* **Decision & rationale:** Selected **Option 3**. Local SQLite checkpoints preserve exact per-thread message history and active order context, while optional Supermemory stores sanitized cross-thread shopper preferences (`dreaming` reconsolidation) without burning Groq quota. Active order selection stays strictly bound to the current `thread_id`.
-* **Consequences & trade-offs:** Clean separation of concerns and graceful fallback when `SUPERMEMORY_API_KEY` is omitted; requires WAL/busy-timeout discipline on local SQLite checkpoints and strict PII/JWT redaction before writing to Supermemory.
-* **Evidence & validation:** 4 passing component tests for optional memory retrieval, sanitized writes, and failure fallback; checkpoint integration tests. Link: `[INSERT_COMMIT_OR_PR_LINK]`.
-* **Revisit trigger:** Multi-instance horizontal scaling of the backend (migrate local SQLite checkpointer to `AsyncPostgresSaver`).
+### Decision & rationale
+Selected **Option 2 (Hybrid Cloud-Local Architecture)**, consolidating six coordinated upgrades under a single strict topology (removing dual-mode local/cloud toggles):
 
----
+| Subsystem | Previous (`ADR-001` Local) | Selected (`ADR-002` Hybrid) | Rationale |
+| :--- | :--- | :--- | :--- |
+| **LLM Inference** | Local Ollama (`Qwen 4B`) | **Groq Cloud API** (`openai/gpt-oss-120b`, Apache 2.0) | Eliminates local RAM/GPU bottlenecks, cuts latency sharply, and improves greeting, schema-constrained triage, and policy synthesis. |
+| **Policy RAG & Embeddings** | Local `BAAI/bge-small-en-v1.5` (~133 MB, 512-tok) + local Qdrant | **Qdrant Cloud Inference** (`sentence-transformers/all-minilm-l6-v2`, 384-dim, 256-tok) | Eliminates local ML/CPU runtime and disk downloads using free server-side inference in a single network hop; chunks kept at 180 words to fit the 256-token window. |
+| **OMS Tool Boundary & Auth** | Direct SQLite queries + `X-Approval-Token` | **Loopback Streamable HTTP MCP** (`127.0.0.1:8001/mcp`) + **per-request Bearer JWT** | Enforces protocol separation and IDOR defense: MCP validates JWT signature/expiry/session, extracts `sub` (`customer_id`), enforces `WHERE customer_id = ?`, and runs deterministic refund & ₹5,000 Tier-2 rules in code. |
+| **State & Long-Term Memory** | Local JSON history consolidation (`memories/*.json`) | **Local SQLite Checkpoints** (`data/checkpoints.db`) + **Optional Supermemory** | Keeps exact per-thread execution state and active `order_id` local while offloading sanitized cross-thread shopper context to Supermemory (managed reconsolidation), preserving Groq free-tier token quota. |
+| **Frontend UI** | Chainlit + FastAPI | **Local Streamlit UI** (`ui.py`) | Single-command startup (`streamlit run ui.py`) with integrated JWT shopper login, thread switcher, policy source citations, and per-turn trace IDs. |
+| **Observability & Guardrails** | Basic local logs & minimal output trim | **Input/Output Guardrails + PII/JWT Redaction + Optional Langfuse EU + Rotating Local Logs** | Defense-in-depth injection/compliance checks; raw JWTs stay in runtime context only and are redacted before cloud tracing or logging. |
 
-## ADR-005 — UI Layer: Switch from Chainlit to Streamlit
+### Consequences & trade-offs
+* **Measured benefits:** End-to-end latency dropped from **~30 s/request** (local baseline) to **p90 = 15.0 s** across **108 Langfuse EU traces**; greeting handling and golden-dataset response quality improved; evaluators need zero local GPU or embedding downloads.
+* **Trade-offs & risks:**
+  * Introduces external internet dependencies and free-tier Groq rate limits (30 RPM / 8K TPM), mitigated via retry backoff and graceful no-op fallbacks for optional Supermemory and Langfuse.
+  * Moving from `BAAI/bge-small-en-v1.5` (33.4M params, 512-token window) to Qdrant Cloud's free server-side `sentence-transformers/all-minilm-l6-v2` (22.7M params, 256-token window) trades some standalone dense retrieval ceiling for zero local footprint—contributing to Returns & Refunds Recall@3 of `0.5455` (Overall Recall@3 = `0.7391`).
+  * Loopback MCP (`127.0.0.1`) and local SQLite are single-host demo boundaries; multi-user cloud production requires TLS, OIDC/JWKS, and `AsyncPostgresSaver`.
+  * Streamlit awaits full turn completion rather than streaming tokens live.
+* **Impact on milestones & frozen tests:** All frozen acceptance tests (IDOR isolation, deterministic refund eligibility, explicit confirmation before mutation, prompt-injection blocking, and 30-query golden evaluation) remained intact without weakening criteria; automated test coverage expanded to 63 tests.
 
-* **Date, status & scope:** Documentation date: 21 November 2026 | **Status:** Accepted | **Supersedes:** Chainlit UI choice in ADR-001 | **Scope:** `ui.py`
-* **Context & decision drivers:** Evaluators needed a simple single-command local UI capable of JWT shopper login/switching, thread resets, displaying policy citations, and surfacing per-turn Langfuse trace IDs alongside chat without async WebSocket lifecycle conflicts.
-* **Options considered:**
-  1. **Keep Chainlit:** Polished chat-first UX, but adds a separate ASGI/WebSocket runtime and requires extra customization for operational controls.
-  2. **Streamlit (Selected):** Single-command local startup (`streamlit run ui.py`), straightforward session-state management for JWT + `thread_id`, and easy rendering of citations and trace IDs.
-* **Decision & rationale:** Selected **Streamlit** for faster operational testing and cleaner local orchestration alongside the loopback MCP server.
-* **Consequences & trade-offs:** Simplifies local setup and grading inspection; responses currently await completion before rendering rather than streaming tokens live.
-* **Evidence & validation:** Working UI snapshots in Report Figs. 10–13 showing shopper sign-in, thread isolation, citations, and Langfuse trace IDs.
-* **Revisit trigger:** Requirement for live token-by-token streaming UX or customer-facing web production deployment (migrate to Next.js/React frontend over SSE).
+### Evidence & validation
+* **Latency & Observability:** 108 `shopsense-turn` root traces in Langfuse EU confirming **p90 = 15.0 s** (`docs/Project_Report.pdf`, Fig. 4).
+* **Golden Dataset (30 queries):** Policy RAG Mean Recall@3 = `0.7391` (Delivery = `1.0000`, Damage/Safety = `0.7500`, Returns/Refunds = `0.5455`), Mean Precision@3 = `0.2899` (`data/golden_dataset/golden_test_results.csv`, `golden_test_execution.log`).
+* **Automated Test Suite (`pytest`):** 63/63 tests passing across guardrails (6/6), LLM retries (6/6), intent detection (6/6), confirmation gates (4/4), MCP/JWT & OMS isolation (13/13), Qdrant Cloud Inference ingestion (3/3), RAG metrics (5/5), response composition (11/11), optional Supermemory (4/4), and observability (5/5).
+* **Implementation Links:** `app/workflow/router.py`, `app/mcp_server.py`, `app/auth_context.py`, `app/retrieval/policies.py`, `app/persistence/checkpoints.py`, `app/persistence/supermemory.py`, `app/observability.py`, `ui.py`, and commit/PR `60e3c8738f21c3b50382721f93069ad6a826f3b7`.
