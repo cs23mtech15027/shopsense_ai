@@ -1,7 +1,7 @@
 # ShopSense — Architecture Decision Records (ADRs)
 
 **Course:** CS5903: Distributed AI Training  
-**Project:** ShopSense Multi-Agent E-Commerce Customer Care Assistant  
+**Project:** ShopSense - Customer Care & Order Operations Assistant  
 **Student:** Yashkumar Joshi (`CS23MTECH15027`)  
 **Repository:** https://github.com/cs23mtech15027/shopsense_ai  
 **Documentation Date:** 21 November 2026
@@ -11,7 +11,7 @@
 ## ADR-001 — Initial Local-Only Multi-Agent Architecture (9 October 2026 Baseline)
 
 ### Date, status & scope
-* **Decision Date:** 9 October 2026 *(documented 21 November 2026)*
+* **Date:** 9 October 2026 *(documented 21 November 2026)*
 * **Status:** Superseded by `ADR-002`
 * **Scope:** Complete initial runtime stack — local LLM inference, local Policy RAG embeddings/vector DB, FastAPI + Chainlit UI, local JSON memory consolidation, and SQLite OMS.
 
@@ -19,15 +19,15 @@
 By the 9 October 2026 methodology checkpoint, ShopSense required a self-contained, zero-cost prototype to validate stateful multi-agent e-commerce customer support (order tracking, multi-format policy Q&A, and deterministic return/refund eligibility). Key drivers were avoiding external API billing during early bring-up, proving deterministic policy/refund enforcement in Python/SQLite (mitigating chatbot policy-hallucination liability), and running offline on a local system.
 
 ### Options considered
-1. **Local-Only Stack (Selected on 9 October 2026):** Local Ollama (`Qwen 4B`), local `BAAI/bge-small-en-v1.5` embeddings (~133 MB), local Qdrant, FastAPI + Chainlit UI, local JSON history summarization, and direct SQLite OMS queries with static `X-Approval-Token` approval endpoints.
-2. **Cloud-First Stack from Day 1:** Hosted LLM inference, cloud vector DB, and remote backend services. Offered lower latency and stronger models, but added early credential management, quota setup, and deployment complexity before the core LangGraph workflow was verified.
+1. **Local-Only Stack:** Local Ollama (`Qwen 4B`), local `BAAI/bge-small-en-v1.5` embeddings (~133 MB), local Qdrant, FastAPI + Chainlit UI, local JSON history summarization, and direct SQLite OMS queries with static `X-Approval-Token` approval endpoints.
+2. **Hybrid Cloud-Local Multi-Agent Architecture:** Hosted LLM inference, cloud vector DB, and remote backend services. Offered lower latency and stronger models, but added early credential management, quota setup, and deployment complexity before the core LangGraph workflow was verified.
 
 ### Decision & rationale
 Selected **Option 1 (Local-Only Stack)** on 9 October 2026 to establish a working, offline-reproducible baseline for the LangGraph triage-and-specialist architecture (`Care`, `Order`, `Refund`) and verify multi-format `.txt`/`.csv`/`.pdf` ingestion and SQLite eligibility rules with zero external dependencies.
 
 ### Consequences & trade-offs
 * **Benefits:** Proved end-to-end LangGraph routing, table-aware PDF/CSV policy extraction, and deterministic refund eligibility checks without API costs.
-* **Costs & limitations:** High end-to-end latency (**~25–30 seconds per request** on local hardware); tight local RAM/disk limits (≥5 GB RAM needed for `Qwen 4B` plus ~133 MB for local embeddings) blocked upgrading to a stronger tool-capable LLM; `Qwen 4B` produced weaker greeting and nuanced triage quality; manual LLM summarization into local JSON files added extra latency and created lossy static snapshots.
+* **Costs & limitations:** High end-to-end latency (**~30 seconds per request** on local hardware); tight local RAM/disk limits (≥5 GB RAM needed for `Qwen 4B` plus ~133 MB for local embeddings) blocked upgrading to a stronger tool-capable LLM; `Qwen 4B` produced weaker greeting and nuanced triage quality; manual LLM summarization into local JSON files added extra latency and created lossy static snapshots.
 
 ### Evidence & validation
 * Baseline architecture and component breakdown documented in `docs/Project_Report.pdf` (Section 2 & Baseline Table).
@@ -48,7 +48,7 @@ Observed per-request latency persistently exceeding 30 seconds, or local RAM/dis
 
 ### Context & decision drivers
 Live evaluation of the `ADR-001` local baseline triggered both revisit conditions:
-1. **Latency bottleneck:** Local inference on a student Windows laptop (Intel Core i3, 4 GB RAM) averaged **~25–30 seconds per request**, making interactive demos and 30-query golden-dataset sweeps impractical.
+1. **Latency bottleneck:** Local inference on a personal laptop (Intel Core i3, 4 GB RAM) averaged **~30 seconds per request**, making interactive demos and 30-query golden-dataset sweeps impractical.
 2. **Hardware ceiling:** Limited local RAM and disk space locked inference to `Qwen 4B` and required local embedding model downloads (~133 MB), limiting greeting/triage accuracy and evaluator reproducibility.
 3. **Security, state & operational gaps:** Direct SQLite calls and static approval tokens lacked per-user JWT isolation (IDOR protection), local JSON summarization burned extra LLM calls and created stale files, and Chainlit lacked simple side-by-side operational controls (JWT login, thread switching, citations, trace IDs).
 
