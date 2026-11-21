@@ -2,7 +2,8 @@ from typing import Any
 
 
 def _source_name(source: str) -> str:
-    return source.strip().replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    filename = source.strip().split(":", 1)[0]
+    return filename.replace("\\", "/").rsplit("/", 1)[-1].casefold()
 
 
 def compute_rag_metrics(

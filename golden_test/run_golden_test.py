@@ -42,11 +42,32 @@ _RESULTS = PROJECT_ROOT / "data" / "golden_dataset" / "golden_test_results.csv"
 logger = logging.getLogger("shopsense.evaluation")
 
 
-def _write_results(results: list[dict[str, str]]) -> None:
+def _write_results(
+    results: list[dict[str, str]],
+    output_path: Path = _RESULTS,
+) -> Path:
     if not results:
-        return
-    _RESULTS.parent.mkdir(parents=True, exist_ok=True)
-    with _RESULTS.open("w", encoding="utf-8", newline="") as output_file:
+        return output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _write_results_file(results, output_path)
+    except PermissionError:
+        fallback_path = output_path.with_name(
+            f"{output_path.stem}_{uuid.uuid4().hex[:8]}{output_path.suffix}"
+        )
+        _write_results_file(results, fallback_path)
+        logger.warning(
+            "Could not write evaluation results to %s; saved to %s instead. "
+            "Close the file if you want to overwrite the default results file.",
+            output_path,
+            fallback_path,
+        )
+        return fallback_path
+    return output_path
+
+
+def _write_results_file(results: list[dict[str, str]], output_path: Path) -> None:
+    with output_path.open("w", encoding="utf-8", newline="") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=results[0].keys())
         writer.writeheader()
         writer.writerows(results)
@@ -89,6 +110,7 @@ async def _run() -> None:
     with _DATASET.open(encoding="utf-8", newline="") as dataset_file:
         rows = list(csv.DictReader(dataset_file))
     results: list[dict[str, str]] = []
+    results_path = _RESULTS
 
     for row in rows:
         trace_id = uuid.uuid4().hex
@@ -255,7 +277,7 @@ async def _run() -> None:
                 "error_type": error_type,
             }
         )
-        _write_results(results)
+        results_path = _write_results(results, results_path)
         logger.info(
             "Evaluation case complete query_id=%s intent=%s status=%s "
             "guardrail_pass=%s trace_id=%s",
@@ -284,7 +306,7 @@ async def _run() -> None:
         f"guardrail pass rate={guardrail_accuracy:.3f}; "
         f"workflow errors={sum(bool(item['error_type']) for item in results)}."
     )
-    print(f"Results: {_RESULTS}")
+    print(f"Results: {results_path}")
 
 
 def main() -> None:
